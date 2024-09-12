@@ -53,4 +53,14 @@
 # deactivate
 # ```
 
+# %% [markdown]
+# ### Plan
+#
+# - installations;
+# - run-of-the-mill perceptron:
+#   - Problem (suggestion): range of a projectile as a function of $v_0$ and $\alpha$;
+#   - Forward propagation
+#   - Backward propagation using `jax`
+#
+
 # %%
