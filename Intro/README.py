@@ -22,6 +22,7 @@
 # Some ways to get started with ML:
 # - Coursera:
 #   - Andrew Ng's courses/specializations, e.g. *Machine Learning*, *Neural Networks and Deep Learning*, *Improving Deep Neural Networks: Hyperparameter Tuning, Regularization and Optimization*.
+#   - [DeepLearning.ai](deeplearning.ai)
 # - YouTube:
 #   - e.g. [TensorFlow tutorials](https://www.youtube.com/watch?v=5Ym-dOS9ssA&list=PLhhyoLH6IjfxVOdVC1P1L5z5azs0XjMsb)
 # - Books:
@@ -31,6 +32,8 @@
 # ### Preparing a python environment
 #
 # Different projects may require different sets of python packages with different versions. A good practice is to confine each project to its own python environment. It is also helpful that any software issues within an environment do not affect the system-wide python installation. That is, *what happens in a python environment stays in the python environment*.
+#
+# #### Linux/Mac
 #
 # To create an environment with some name (I use *testml* below) in a directory: 
 # ```
@@ -52,6 +55,48 @@
 # ```
 # deactivate
 # ```
+#
+# #### Windows
+#
+# 1. To create a venv:
+# ```
+# python -m venv C:\path\to\new\virtual\environment
+# ```
+# For example, if we want to create a venv called *testml* in the current location,
+# ```
+# python -m venv testml
+# ```
+# 2. To activate the venv:
+# ```
+# C:\path\to\new\virtual\environment\Scripts\activate
+# ```
+# To activate the venv from our previous example,
+# ```
+# testml\Scripts\activate
+# ```
+# When the venv is activated, its name appears in the beginning of the command line:
+# ```
+# (testml) C:\>
+# ```
+# 3. To install packages,
+# ```
+# python -m pip install --upgrade pip
+# python -m pip install numpy scipy matplotlib jupyter
+# ```
+#    - Any additional packages can be installed by using `python -m pip install` followed by the name of a package.
+# 4. To launch a jupyter notebook,
+# ```
+# jupyter notebook
+# ```
+# If that doesn't work, try
+# ```
+# python -m notebook
+# ```
+# 5. To deactivate the venv,
+# ```
+# deactivate
+# ```
+#
 
 # %% [markdown]
 # ### Plan
@@ -60,7 +105,5 @@
 # - run-of-the-mill perceptron:
 #   - Problem (suggestion): range of a projectile as a function of $v_0$ and $\alpha$;
 #   - Forward propagation
-#   - Backward propagation using `jax`
-#
 
 # %%
