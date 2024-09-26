@@ -24,7 +24,7 @@
 #
 # <ins>Follow-up</ins>: The GD below does not seem to result in optimal weights. Debug the pipeline.
 
-# %% jupyter={"source_hidden": true}
+# %%
 import numpy as np
 import scipy
 import matplotlib.pyplot as plt
