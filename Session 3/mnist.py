@@ -57,6 +57,153 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 # %% [markdown]
 # #### Datasets
 #
-# Although it is possible to use `tensorflow` to load the MNIST datasets, let us first just download it from the source. The original MNIST website throws an access denied error. We will use a [GitHub repo](https://github.com/lorenmh/mnist_handwritten_json) instead.
+# Although it is possible to use `tensorflow` to load the MNIST datasets, let us first just download it from the source. The original MNIST website throws an access denied error. We will use a [GitHub repo](https://github.com/lorenmh/mnist_handwritten_json) instead to download a training set `mnist_handwritten_train.json` and a test set `mnist_handwritten_test.json`.
+
+# %%
+import json
+
+with open('data/mnist_handwritten_train.json', 'r') as file:
+    training_json = json.load(file)
+
+with open('data/mnist_handwritten_test.json', 'r') as file:
+    testing_json = json.load(file)
+
+# %%
+type(training_json[0]), type(testing_json[0])
+
+# %%
+training_json[0].keys()
+
+# %%
+# arr = np.array(training_json[0]['image'])
+# print(training_json[0]['label'])
+
+# plt.imshow(arr.reshape(28,28))
+
+rng = np.random.default_rng()
+
+train_len = len(training_json)
+
+images = []
+labels = []
+for i in range(25):
+    index = rng.integers(train_len-1)
+    images.append(np.array(training_json[index]['image']).reshape(28,28))
+    labels.append(training_json[index]['label'])
+
+
+fig,axes = plt.subplots(ncols=5, nrows=5, figsize=(10,10))
+
+
+for image,label,ax in zip(images,labels,axes.flatten()):
+
+    ax.imshow(image)
+    ax.annotate(label, xy=(0.8,0.8), xycoords='axes fraction', color='white')
+    ax.set_axis_off()
+    #ax.title.set_text(label)
+
+
+# %%
+x_train = []
+y_train = []
+x_test = []
+y_test = []
+
+for data in training_json:
+    x_train.append(data['image'])
+    y_train.append(data['label'])
+
+for data in testing_json:
+    x_test.append(data['image'])
+    y_test.append(data['label'])
+
+x_train = np.array(x_train) / 255.
+y_train = np.array(y_train)
+x_test = np.array(x_test) / 255.
+y_test = np.array(y_test)
+
+# %%
+x_train.shape, x_test.shape, y_train.shape, y_test.shape
+
+# %% [markdown]
+# #### Neural network with Dense layers (= fully connected)
+
+# %%
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+
+from keras.losses import CategoricalCrossentropy, SparseCategoricalCrossentropy
+from keras.optimizers import Adam
+# digit 5
+#[0,0,0,0,1,0,0,0,0,0]
+#[0.1,0.1,0.01,0.01,0.7,,,,,]
+
+# %% [markdown]
+# Unlike the problem of predicting the range of projectile motion, the image recognition of handwritten digits is a classification problem: we expect the NN to be able to predict which of the ten classes $\{0,1,\ldots,9\}$ an image falls into. The output of our NN will be a vector $\{\hat{y}_i\}_{i=1,\ldots,10}$. In its "raw" version, its components are real numbers, $\hat{y}_i\in(-\infty,+\infty)$. In order to compare it against a true integer value $M$, 
+# - the true value is encoded in a vector $\{y_i\}_{i=1,\ldots,10}$ such that $y_M=1$ and $y_i=0\,, i\neq M$ (so-called *one-hot encoding*);
+# - and the prediction vector is normalized such that its components add up to $1$ which can be done with the *softmax* activation function: $\mbox{softmax}(\hat{y}_i) = e^{\hat{y}_i}/\sum\limits_{k=1}^{10}{e^{\hat{y}_k}}$\,.
+#
+# Then, the deviation between a prediction and the true value can be quantified with the *CategoricalCrossentropy* loss:
+# $$
+# \mbox{loss}_{\rm CC}(y_i,\hat{y}_i) = -\frac{1}{10}\sum\limits_{k=1}^{10}{y_i\log{\hat{y}_i}}\,.
+# $$
+# This loss expects true outputs to be one-hot encoded. If keyword `from_logits=True` is used, the *softmax* activation is automatically applied (that is, there is no need to explicitly specify an activation function in the last layer).
+#
+# Now, recall that $y_i$ are either 0 or 1, and all terms except the true one vanish. It is then possible to use the *SparseCategoricalCrossentropy* loss (because the true vector is sparse):
+# $$
+# \mbox{loss}_{\rm SCC}(y_i,\hat{y}_i) = -{\log{\hat{y}_M}}\,,
+# $$
+# where $M$ is the index of the true class.
+# This loss expects true outputs to be indices of the classes. In the case of digits they coincide with the true digits. The `from_logits=True` keyword has the same meaning.
+#
+# In what follows we use the *SparseCategoricalEntropy*, because we do not want to do the extra work of converting the digits into one-hot vectors.
+#
+
+# %%
+model = keras.Sequential(
+    [
+        layers.Dense(32, activation='relu'),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(256, activation='relu'),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(32, activation='relu'),
+        layers.Dense(10),
+    ]
+)
+
+# optimization
+model.compile(optimizer=Adam(), loss=SparseCategoricalCrossentropy(from_logits=True), metrics=['accuracy'])
+
+# training
+history = model.fit(
+    x_train, y_train, 
+    batch_size=64, epochs=50, validation_split=0.2, verbose=2,
+)
+
+# %% [markdown]
+# **Results**: From the plots below, it is clear that the model is overfitting: it performs much better on training data than on validation data. There are a few ways to combat overfitting:
+# - make the model less complex (fewer trainable parameters),
+# - introduce regularization,
+# - introduce dropout layers (randomly drop a fraction of connections between two neighboring layers).
+
+# %%
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+
+ax.plot(acc, label='training')
+ax.plot(val_acc, label='validation')
+ax.set_xlabel('epoch #')
+ax.set_ylabel('accuracy')
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+ax.legend()
+
 
 # %%
