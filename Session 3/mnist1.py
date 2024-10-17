@@ -14,7 +14,7 @@
 # ---
 
 # %% [markdown]
-# Here we will work with the [MNIST](https://yann.lecun.com/exdb/mnist/) dataset of handwritten digits. First, we will experiment with a NN made of Dense layers, and then we will try a new architecture, the so-called convolutional neural networks (CNN) which are well suited for image recognition.
+# Here we will work with the [MNIST](https://yann.lecun.com/exdb/mnist/) dataset of handwritten digits. First, we will experiment with a NN made of Dense layers, run into an overfitting, and assess the results with a confusion matrix.
 
 # %%
 import numpy as np
@@ -185,7 +185,7 @@ history = model.fit(
 # **Results**: From the plots below, it is clear that the model is overfitting: it performs much better on training data than on validation data. There are a few ways to combat overfitting:
 # - make the model less complex (fewer trainable parameters),
 # - introduce regularization,
-# - introduce dropout layers (randomly drop a fraction of connections between two neighboring layers).
+# - introduce dropout layers (see Session 4).
 
 # %%
 acc = history.history['accuracy']
@@ -205,5 +205,46 @@ ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.legend()
 
+
+# %% [markdown]
+# One of the ways to illustrate the results is with a confusion matrix which shows what digits are misclassified and specifies the respective missclassification labels. For example, below we notice that theere are 30 cases when the label "4" is misclassified as the label "9". Showing all the images that correspond to these cases gives a hint why the NN may have taken "4" for a "9".
+
+# %%
+predictions = model.predict(x_test)
+
+predictions = np.argmax(predictions, axis=1)
+
+confusion_matrix = tf.math.confusion_matrix(y_test, predictions)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,6))
+
+ax.imshow(confusion_matrix)
+
+print(confusion_matrix)
+
+# %%
+cond = np.logical_and(y_test==4, predictions==9)
+
+confused_images = x_test[cond]
+confused_labels = y_test[cond]
+conf_len = len(confused_images)
+
+images = []
+labels = []
+for i in range(25):
+    index = rng.integers(conf_len-1)
+    images.append(np.array(confused_images[index]).reshape(28,28))
+    labels.append(confused_labels[index])
+
+
+fig,axes = plt.subplots(ncols=5, nrows=5, figsize=(10,10))
+
+
+for image,label,ax in zip(images,labels,axes.flatten()):
+
+    ax.imshow(image)
+    ax.annotate(label, xy=(0.8,0.8), xycoords='axes fraction', color='white')
+    ax.set_axis_off()
+    #ax.title.set_text(label)
 
 # %%
