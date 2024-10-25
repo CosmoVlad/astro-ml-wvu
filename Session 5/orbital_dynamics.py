@@ -88,6 +88,7 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 #
 # #### Eqs. (7)
 # \begin{eqnarray}
+#     r(t) &=& p(t) M / (1+e(t) \cos\chi(t)) \,, \\
 # 	\mathbf{r}_1(t)
 # 	&=&
 # 	\frac{r(t) m_2}{M}\left(\cos(\phi(t)),\sin(\phi(t)), 0 \right) \,,
@@ -206,18 +207,6 @@ def GR_rhs(y,t):     # t -> t/M:   G=c=1
 
     return np.array([phi_dot,chi_dot,p_dot,e_dot])
 
-def Jtensor(x2,y2,q):
-
-    Ixx = q*x2**2
-    Iyy = q*y2**2
-    Ixy = q*x2*y2
-
-    trace = Ixx + Iyy
-
-    return np.array(
-        [Ixx - trace/3, Ixy],
-        [Ixy, Iyy - trace/3]
-    )
 
 
 # %%
@@ -252,4 +241,123 @@ ax.set_ylabel('$y$')
 
 ax.set_aspect('equal')
 
+
+# %% [markdown]
+# ### Quadrupole tensor
+
 # %%
+def Jtensor(phi,chi,p,e, q):
+
+    r = p / (1 + e*np.cos(chi))
+
+    x1 = r * q/(1+q) * np.cos(phi)
+    y1 = r * q/(1+q) * np.sin(phi)
+
+    x2 = -r * 1/(1+q) * np.cos(phi)
+    y2 = -r * 1/(1+q) * np.sin(phi)
+
+    Ixx = x1**2 + q*x2**2
+    Iyy = y1**2 + q*y2**2
+    Ixy = x1*y1 + q*x2*y2
+
+    trace = Ixx + Iyy
+
+    return np.array(
+        [
+            [Ixx - trace/3, Ixy],
+            [Ixy, Iyy - trace/3]   
+        ]
+    )
+
+
+def h22(phi,chi,p,e, q, dt):
+
+    J = Jtensor(phi,chi,p,e, q)
+    r = p / (1 + e*np.cos(chi))
+
+    Jxx,Jxy,Jyy = J[0,0],J[0,1],J[1,1]
+
+    ddJxx = (Jxx[2:] - 2*Jxx[1:-1] + Jxx[:-2]) / dt**2
+    ddJxy = (Jxy[2:] - 2*Jxy[1:-1] + Jxy[:-2]) / dt**2
+    ddJyy = (Jyy[2:] - 2*Jyy[1:-1] + Jyy[:-2]) / dt**2
+
+    return 1/r[1:-1] * np.sqrt(4*np.pi/5) * (ddJxx - 2*1j*ddJxy - ddJyy)
+
+
+# %%
+dt = times[1] - times[0]  # assuming that all timesteps are equal
+q = 0.01
+
+print(sol.T.shape)
+
+Jtensor(*sol.T, q).shape
+
+# %%
+waveform = h22(*sol.T, q,dt)
+
+wf_norm = (waveform - np.mean(waveform)) / np.std(waveform)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(times[1:-1], np.real(wf_norm), label='Re')
+ax.plot(times[1:-1], np.imag(wf_norm), label='Im')
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('time (s)')
+ax.set_ylabel('$h_{22}$')
+
+
+
+# %% [markdown]
+# #### Universal Differential Equations (UDEs)
+
+# %%
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+
+
+def UDE_rhs(y,t, model1, model2):     # t -> t/M:   G=c=1
+                        # M -> GM/c^3
+
+    phi,chi,p,e = y
+
+    F1,F2 = model1.predict([np.cos(chi),p,e])
+    F3,F4 = model2.predict([p,e])
+
+    phi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F1)
+    chi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F2)
+    p_dot = F3
+    e_dot = F4
+
+    return np.array([phi_dot,chi_dot,p_dot,e_dot])
+
+model1 = keras.Sequential(
+    [
+        layers.Dense(32, activation='relu'),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(2, activation='relu'),
+    ]
+)
+
+model2 = keras.Sequential(
+    [
+        layers.Dense(32, activation='relu'),
+        layers.Dense(64, activation='relu'),
+        layers.Dense(2, activation='relu'),
+    ]
+)
+
+# optimization
+model.compile(optimizer=Adam(), loss=losses, metrics=['accuracy'])
+
+# training
+history = model.fit(
+    x_train, y_train, 
+    batch_size=64, epochs=50, validation_split=0.2, verbose=2,
+)
