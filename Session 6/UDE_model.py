@@ -311,10 +311,10 @@ ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('time (s)')
 ax.set_ylabel('$h_{22}$')
 
-
+print(waveform.shape)
 
 # %% [markdown]
-# #### Universal Differential Equations
+# #### Universal Differential Equations (UDEs)
 
 # %%
 import tensorflow as tf
@@ -322,42 +322,175 @@ from tensorflow import keras
 from tensorflow.keras import layers
 
 
-def UDE_rhs(y,t, model1, model2):     # t -> t/M:   G=c=1
+# def UDE_rhs(y,t, model1, model2):     # t -> t/M:   G=c=1
+#                         # M -> GM/c^3
+
+#     phi,chi,p,e = y
+
+#     F1,F2 = model1.predict([np.cos(chi),p,e])
+#     F3,F4 = model2.predict([p,e])
+
+#     phi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F1)
+#     chi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F2)
+#     p_dot = F3
+#     e_dot = F4
+
+#     return np.array([phi_dot,chi_dot,p_dot,e_dot])
+
+# model1 = keras.Sequential(
+#     [
+#         layers.Dense(32, activation='relu'),
+#         layers.Dense(64, activation='relu'),
+#         layers.Dense(2, activation='relu'),
+#     ]
+# )
+
+# model2 = keras.Sequential(
+#     [
+#         layers.Dense(32, activation='relu'),
+#         layers.Dense(64, activation='relu'),
+#         layers.Dense(2, activation='relu'),
+#     ]
+# )
+
+# # optimization
+# model.compile(optimizer=Adam(), loss=losses, metrics=['accuracy'])
+
+# # training
+# history = model.fit(
+#     x_train, y_train, 
+#     batch_size=64, epochs=50, validation_split=0.2, verbose=2,
+# )
+
+# %%
+def fiducial_rhs(y):     # t -> t/M:   G=c=1
                         # M -> GM/c^3
 
-    phi,chi,p,e = y
+    # y -> (None, 4)
+    
+    phi,chi,p,e = tf.transpose(y)
 
-    F1,F2 = model1.predict([np.cos(chi),p,e])
-    F3,F4 = model2.predict([p,e])
+    phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
+    chi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
+    p_dot = tf.zeros(tf.shape(phi_dot))
+    e_dot = tf.zeros(tf.shape(phi_dot))
 
-    phi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F1)
-    chi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F2)
-    p_dot = F3
-    e_dot = F4
+    return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot]))   # (None, 4)
 
-    return np.array([phi_dot,chi_dot,p_dot,e_dot])
 
-model1 = keras.Sequential(
+class Fblock(keras.Layer):
+
+    def __init__(self, units_list):
+        super(Fblock, self).__init__()
+        self.dense1 = layers.Dense(units_list[0], activation='relu')
+        self.dense2 = layers.Dense(units_list[1], activation='relu')
+        self.dense3 = layers.Dense(units_list[2], activation='relu')
+
+    def call(self, input_tensor, training=False):
+
+        x = self.dense1(input_tensor)
+        x = self.dense2(x)
+        x = self.dense3(x)
+
+        return x
+
+class UDE(keras.Layer):
+
+    def __init__(self, tinterval, timestep, q, use_real=True):
+
+        super(UDE, self).__init__()
+        self.tinterval = tinterval
+        self.timestep = timestep
+        self.q = q
+        self.use_real = use_real
+
+        self.fblock1 = Fblock([32,64,2])
+        self.fblock2 = Fblock([32,64,2])
+
+
+    def call(self, input_tensor, training=False):
+
+        # input_tensor -> (None, 4)
+        # sol -> (None, 4, int(tinterval/timestep))
+
+        # sol is obtained from integration(input_tensor)
+
+        def ude_rhs(y):
+        
+            fiducial_rhs_value = fiducial_rhs(y)  # (None, 4)
+    
+            phi,chi,p,e = tf.transpose(y)    # (4, None)
+            pair1 = 1. + self.fblock1(tf.transpose(tf.convert_to_tensor([tf.math.cos(chi),p,e])))   # (None, 2)
+            pair2 = self.fblock2(tf.transpose(tf.convert_to_tensor([p,e])))   # (None, 2)
+    
+            
+            ude_rhs_value = tf.stack(
+                 [
+                     fiducial_rhs_value[:,0:2] * pair1,
+                     fiducial_rhs_value[:,2:] * pair2
+                 ]   
+            )   # (None, 4)
+
+            return ude_rhs_value
+
+        y0 = input_tensor
+        sol = [y0]
+        
+        for i in range(int(self.tinterval/self.timestep)):
+
+            k1 = ude_rhs(y0)
+            k2 = ude_rhs(y0 + self.timestep * k1/2.)
+            k3 = ude_rhs(y0 + self.timestep * k2/2.)
+            k4 = ude_rhs(y0 + self.timestep * k3)
+
+            y0 += self.timestep/6. * (k1 + 2*k2 + 2*k3 + k4)
+            sol.append(y0)
+
+        sol = tf.convert_to_tensor(sol)   # (num_timesteps, None, 4) -> (4, num_timesteps, None)
+        
+        phi,chi,p,e = tf.transpose(sol, perm=[2,0,1])   # (4, num_timesteps, None)
+
+        ##########################################
+        
+        waveform = tf.transpose(h22(phi,chi,p,e, self.q, self.timestep))    # (None, num_timesteps - 2)
+        mean = tf.math.reduce_mean(waveform, axis=0)
+        std = tf.math.reduce_std(waveform, axis=0)
+        wform_norm = (waveform - mean) / std
+
+        if self.use_real:
+            return tf.math.real(wform_norm)
+        return tf.math.imag(wform_norm)
+
+        
+
+    
+
+# %%
+tfin = 2*np.pi * 100 * np.sqrt(p0**3)
+#tfin = 100000
+
+times = np.linspace(tinit, tfin, 100000)
+
+batch_size = 32
+
+y0 = np.array(
+    [[0.,0.,p0,e0]]
+)
+
+input_tensor = np.repeat(y0, batch_size, axis=0)
+
+timestep = times[1] - times[0]
+
+input_tensor.shape
+
+# %%
+model = keras.Sequential(
     [
-        layers.Dense(32, activation='relu'),
-        layers.Dense(64, activation='relu'),
-        layers.Dense(2, activation='relu'),
+        UDE(times[-1], timestep, q=0.5)
     ]
 )
 
-model2 = keras.Sequential(
-    [
-        layers.Dense(32, activation='relu'),
-        layers.Dense(64, activation='relu'),
-        layers.Dense(2, activation='relu'),
-    ]
-)
+# %%
+model.call(input_tensor)
 
-# optimization
-model.compile(optimizer=Adam(), loss=losses, metrics=['accuracy'])
-
-# training
-history = model.fit(
-    x_train, y_train, 
-    batch_size=64, epochs=50, validation_split=0.2, verbose=2,
-)
+# %%
