@@ -21,10 +21,6 @@ import numpy as np
 import scipy
 import matplotlib.pyplot as plt
 
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-
 MEDIUM_SIZE = 18
 BIGGER_SIZE = 22
 
@@ -140,21 +136,116 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 # and bracket notation, $\langle \cdot \rangle$, denotes 
 # denotes averaging over the time interval.
 
+# %% [markdown]
+# ### Newtonian trajectories
+
 # %%
-def fiducial_rhs(y):     # t -> t/M:   G=c=1
+from scipy.integrate import odeint
+
+def Newton_rhs(y,t):     # t -> t/M:   G=c=1
                         # M -> GM/c^3
 
-    # y -> (None, 4)
-    
-    phi,chi,p,e = tf.transpose(y)
+    phi,chi,p,e = y
 
-    phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
-    chi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
-    p_dot = tf.zeros(tf.shape(phi_dot))
-    e_dot = tf.zeros(tf.shape(phi_dot))
+    phi_dot = (1 + e*np.cos(chi))**2 / p**1.5
+    chi_dot = (1 + e*np.cos(chi))**2 / p**1.5
+    p_dot = 0.
+    e_dot = 0.
 
-    return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot]))   # (None, 4)
+    return np.array([phi_dot,chi_dot,p_dot,e_dot])
 
+def trajectory(phi,chi,p,e):
+
+    r = p/(1 + e*np.cos(chi))
+
+    return np.array([r*np.cos(phi),r*np.sin(phi)])
+
+
+# %%
+tinit = 0.
+tfin = 2*np.pi
+
+times = np.linspace(tinit, tfin, 100)
+
+y0 = np.array(
+    [0.,0.,1.,0.2]
+)
+
+sol = odeint(Newton_rhs, y0, times)
+sol.shape
+
+# %%
+x,y = trajectory(*sol.T)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(x,y)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+
+# %% [markdown]
+# ### GR trajectories ("test particle")
+
+# %%
+def GR_rhs(y,t):     # t -> t/M:   G=c=1
+                        # M -> GM/c^3
+
+    phi,chi,p,e = y
+
+    phi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (p - 2 - 2*e*np.cos(chi)) / np.sqrt((p-2)**2 - 4*e**2)
+    chi_dot = (1 + e*np.cos(chi))**2 / p**2 * (p - 2 - 2*e*np.cos(chi)) *\
+                np.sqrt( (p - 6 - 2*e*np.cos(chi)) / ((p-2)**2 - 4*e**2))
+    p_dot = 0.
+    e_dot = 0.
+
+    return np.array([phi_dot,chi_dot,p_dot,e_dot])
+
+
+
+# %%
+p0 = 100.
+e0 = 0.5
+
+tinit = 0.
+tfin = 2*np.pi * 100 * np.sqrt(p0**3)
+#tfin = 100000
+
+times = np.linspace(tinit, tfin, 100000)
+
+y0 = np.array(
+    [0.,0.,p0,e0]
+)
+
+sol = odeint(GR_rhs, y0, times)
+
+x,y = trajectory(*sol.T)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(x,y)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+ax.set_aspect('equal')
+
+
+# %% [markdown]
+# ### Quadrupole tensor
+
+# %%
 def h22(phi,chi,p,e, q, dt):
 
     r = p / (1 + e*np.cos(chi))    # (num_tsteps, None)
@@ -189,6 +280,98 @@ def h22(phi,chi,p,e, q, dt):
 
 
 # %%
+dt = times[1] - times[0]  # assuming that all timesteps are equal
+q = 0.01
+
+print(sol.T.shape)
+
+Jtensor(*sol.T, q).shape
+
+# %%
+waveform = h22(*sol.T, q,dt)
+
+wf_norm = (waveform - np.mean(waveform)) / np.std(waveform)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(times[1:-1], np.real(wf_norm), label='Re')
+ax.plot(times[1:-1], np.imag(wf_norm), label='Im')
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('time (s)')
+ax.set_ylabel('$h_{22}$')
+
+print(waveform.shape)
+
+# %% [markdown]
+# #### Universal Differential Equations (UDEs)
+
+# %%
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+
+
+# def UDE_rhs(y,t, model1, model2):     # t -> t/M:   G=c=1
+#                         # M -> GM/c^3
+
+#     phi,chi,p,e = y
+
+#     F1,F2 = model1.predict([np.cos(chi),p,e])
+#     F3,F4 = model2.predict([p,e])
+
+#     phi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F1)
+#     chi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (1 + F2)
+#     p_dot = F3
+#     e_dot = F4
+
+#     return np.array([phi_dot,chi_dot,p_dot,e_dot])
+
+# model1 = keras.Sequential(
+#     [
+#         layers.Dense(32, activation='relu'),
+#         layers.Dense(64, activation='relu'),
+#         layers.Dense(2, activation='relu'),
+#     ]
+# )
+
+# model2 = keras.Sequential(
+#     [
+#         layers.Dense(32, activation='relu'),
+#         layers.Dense(64, activation='relu'),
+#         layers.Dense(2, activation='relu'),
+#     ]
+# )
+
+# # optimization
+# model.compile(optimizer=Adam(), loss=losses, metrics=['accuracy'])
+
+# # training
+# history = model.fit(
+#     x_train, y_train, 
+#     batch_size=64, epochs=50, validation_split=0.2, verbose=2,
+# )
+
+# %%
+def fiducial_rhs(y):     # t -> t/M:   G=c=1
+                        # M -> GM/c^3
+
+    # y -> (None, 4)
+    
+    phi,chi,p,e = tf.transpose(y)
+
+    phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
+    chi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
+    p_dot = tf.zeros(tf.shape(phi_dot))
+    e_dot = tf.zeros(tf.shape(phi_dot))
+
+    return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot]))   # (None, 4)
+
 
 class Fblock(keras.Layer):
 
@@ -283,6 +466,9 @@ class UDE(keras.Layer):
         
         return tf.transpose((imag_part - mean) / std)     # (None, num_tsteps - 2)
 
+        
+
+    
 
 # %%
 tinit = 0.
@@ -303,11 +489,13 @@ num_tsteps = int(times[-1]/timestep)
 
 input_tensor.shape
 
+# %%
 q = 0.01
 partial_units_list = [32,32]
 
 ude_layer = UDE(partial_units_list, num_tsteps, timestep, q)
 
+# %%
 test_wforms = np.array(ude_layer(input_tensor))
 
 test_wforms.shape
