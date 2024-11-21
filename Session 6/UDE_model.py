@@ -158,6 +158,7 @@ def fiducial_rhs(y):     # t -> t/M:   G=c=1
 def h22(phi,chi,p,e, q, dt):
 
     r = p / (1 + e*np.cos(chi))    # (num_tsteps, None)
+    print(r)
 
     x1 = r * q/(1+q) * tf.math.cos(phi)
     y1 = r * q/(1+q) * tf.math.sin(phi)
@@ -230,6 +231,7 @@ class UDEcell(keras.Layer):
         k4 = fiducial_rhs(input_tensor + self.timestep * k3)
 
         correction = self.timestep * self.fblock(input_tensor)
+        #correction = 0.
 
         return self.timestep/6. * (k1 + 2*k2 + 2*k3 + k4) + correction   # dy
 
@@ -268,6 +270,11 @@ class UDE(keras.Layer):
         ##########################################
 
         phi,chi,p,e = tf.unstack(sol, axis=-1)
+        phi = tf.keras.ops.nan_to_num(phi, nan=100.)
+        chi = tf.keras.ops.nan_to_num(chi, nan=100.)
+        p = tf.keras.ops.nan_to_num(p, nan=100.)
+        e = tf.keras.ops.nan_to_num(e, nan=100.)
+        
         waveform = h22(phi,chi,p,e, self.q, self.timestep)    # (num_tsteps - 2, None)
 
         if self.use_real:
@@ -282,6 +289,7 @@ class UDE(keras.Layer):
         std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
         
         return tf.transpose((imag_part - mean) / std)     # (None, num_tsteps - 2)
+
 
 
 # %%
@@ -327,6 +335,72 @@ ax.set_xlabel('time (s)')
 ax.set_ylabel('$h_{22}$')
 
 # %%
-test_wforms
+from scipy.integrate import odeint
+
+def GR_rhs(y,t):     # t -> t/M:   G=c=1
+                        # M -> GM/c^3
+
+    phi,chi,p,e = y
+
+    phi_dot = (1 + e*np.cos(chi))**2 / p**1.5 * (p - 2 - 2*e*np.cos(chi)) / np.sqrt((p-2)**2 - 4*e**2)
+    chi_dot = (1 + e*np.cos(chi))**2 / p**2 * (p - 2 - 2*e*np.cos(chi)) *\
+                np.sqrt( (p - 6 - 2*e*np.cos(chi)) / ((p-2)**2 - 4*e**2))
+    p_dot = 0.
+    e_dot = 0.
+
+    return np.array([phi_dot,chi_dot,p_dot,e_dot])
+
+
+# %%
+phi0 = 0.
+chi0 = np.pi
+p0 = 100.
+e0 = 0.5
+
+q = 0.01
+
+
+tinit = 0.
+#tfin = 2*np.pi * 100 * np.sqrt(p0**3)
+tfin = 6e+4
+
+times = np.linspace(tinit, tfin, 2000)
+dt = times[1] - times[0]
+
+y0 = np.array(
+    [phi0,chi0,p0,e0]
+)
+
+sol = odeint(GR_rhs, y0, times)
+sol = tf.convert_to_tensor(sol, dtype=tf.float32)
+
+phi,chi,p,e = tf.unstack(sol, axis=-1)
+
+true_wf = tf.math.real(h22(phi,chi,p,e, q, dt))
+
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot((times[1:-1]),true_wf)
+ax.scatter((times[1:-1])[::8],true_wf[::8], s=10, color='black')
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+#ax.set_aspect('equal')
+
+# %%
+2000/240
+
+# %%
+10000/240
+
+# %%
+60000/240
 
 # %%
