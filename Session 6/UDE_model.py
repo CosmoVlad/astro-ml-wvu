@@ -146,7 +146,7 @@ def fiducial_rhs(y):     # t -> t/M:   G=c=1
 
     # y -> (None, 4)
     
-    phi,chi,p,e = tf.transpose(y)
+    phi,chi,p,e = tf.unstack(y, axis=-1)
 
     phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
     chi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
@@ -157,8 +157,7 @@ def fiducial_rhs(y):     # t -> t/M:   G=c=1
 
 def h22(phi,chi,p,e, q, dt):
 
-    r = p / (1 + e*np.cos(chi))    # (num_tsteps, None)
-    print(r)
+    r = p / (1 + e*tf.math.cos(chi))    # (num_tsteps, None)
 
     x1 = r * q/(1+q) * tf.math.cos(phi)
     y1 = r * q/(1+q) * tf.math.sin(phi)
@@ -293,18 +292,34 @@ class UDE(keras.Layer):
 
 
 # %%
-tinit = 0.
-tfin = 2*np.pi
+# tinit = 0.
+# tfin = 2*np.pi
 
-times = np.linspace(tinit, tfin, 100)
+# times = np.linspace(tinit, tfin, 100)
+
+# y0 = np.array(
+#     [[0.,0.,1.,0.2]]
+# )
+
+phi0 = 0.
+chi0 = np.pi
+p0 = 100.
+e0 = 0.5
+
+
+tinit = 0.
+tfin = 6e+4
+
+times = np.linspace(tinit, tfin, 252)
+dt = times[1] - times[0]
 
 y0 = np.array(
-    [[0.,0.,1.,0.2]]
+    [phi0,chi0,p0,e0]
 )
 
 batch_size = 32
 
-input_tensor = np.repeat(y0, batch_size, axis=0)
+input_tensor = np.repeat([y0], batch_size, axis=0)
 
 timestep = times[1] - times[0]
 num_tsteps = int(times[-1]/timestep)
@@ -377,6 +392,10 @@ sol = tf.convert_to_tensor(sol, dtype=tf.float32)
 phi,chi,p,e = tf.unstack(sol, axis=-1)
 
 true_wf = tf.math.real(h22(phi,chi,p,e, q, dt))
+mean = tf.math.reduce_mean(true_wf)
+std = tf.math.reduce_std(true_wf)
+
+true_wf = (true_wf - mean) / std
 
 
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
@@ -395,12 +414,45 @@ ax.set_ylabel('$y$')
 #ax.set_aspect('equal')
 
 # %%
-2000/240
+x_element = np.array(
+    [phi0,chi0,p0,e0]
+)
+y_element = true_wf[::8]
+
+train_size = 10000
+
+x_train = tf.repeat([x_element], train_size, axis=0)
+y_train = tf.repeat([y_element], train_size, axis=0)
+
+x_train.shape, y_train.shape, type(x_train), type(y_train)
+
 
 # %%
-10000/240
+new_ude_layer = UDE(partial_units_list, 251, 7*dt, q)
+
+new_ude_layer(x_train[:64]).shape
 
 # %%
-60000/240
+#tf.compat.v1.enable_eager_execution()
+
+model = keras.Sequential(
+    [new_ude_layer]
+)
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss=keras.losses.MeanSquaredError()
+)
+
+# training
+history = model.fit(
+    x_train, y_train, 
+    batch_size=32, epochs=20, validation_split=0.2, verbose=1,
+)
+
+# %%
+new_ude_layer = UDE(partial_units_list, 251, 7*dt, q)
+
+new_ude_layer(x_train[:2])
 
 # %%
