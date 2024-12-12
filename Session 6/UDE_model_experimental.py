@@ -238,7 +238,7 @@ class UDEcell(keras.Layer):
 
         dy_correction = self.timestep/6. * (k1 + 2*k2 + 2*k3 + k4)
 
-        return  dy + dy_correction
+        return  dy + 1e-4 * dy_correction
 
         
 
@@ -275,10 +275,18 @@ class UDE(keras.Model):
         ##########################################
 
         phi,chi,p,e = tf.unstack(sol, axis=-1)
-        phi = tf.keras.ops.nan_to_num(phi, nan=10.)
-        chi = tf.keras.ops.nan_to_num(chi, nan=10.)
-        p = tf.keras.ops.nan_to_num(p, nan=10.)
-        e = tf.keras.ops.nan_to_num(e, nan=10.)
+        # phi = tf.keras.ops.nan_to_num(phi, nan=0.)
+        # chi = tf.keras.ops.nan_to_num(chi, nan=np.pi)
+        # p = tf.keras.ops.nan_to_num(p, nan=100.)
+        # e = tf.keras.ops.nan_to_num(e, nan=0.5)
+
+        #r = p / (1 + e*tf.math.cos(chi))    # (num_tsteps, None)
+
+        # x1 = r * q/(1+q) * tf.math.cos(phi)
+        # y1 = r * q/(1+q) * tf.math.sin(phi)
+
+        # x2 = -r * 1/(1+q) * tf.math.cos(phi)
+        # y2 = -r * 1/(1+q) * tf.math.sin(phi)
         
         waveform = h22(phi,chi,p,e, self.q, self.timestep)    # (num_tsteps - 2, None)
 
@@ -286,8 +294,10 @@ class UDE(keras.Model):
             real_part = tf.math.real(waveform)
             mean = tf.math.reduce_mean(real_part, axis=0, keepdims=True)
             std = tf.math.reduce_std(real_part, axis=0, keepdims=True)
+
             
             return tf.transpose((real_part - mean) / std)     # (None, num_tsteps - 2)
+            #return x1,y1,x2,y2
 
         imag_part = tf.math.imag(waveform)
         mean = tf.math.reduce_mean(imag_part, axis=0, keepdims=True)
@@ -331,21 +341,27 @@ model = UDE(partial_units_list, num_tsteps, timestep, q)
 
 test_wforms = np.array(model(input_tensor))
 
-test_wforms.shape
+# test_wforms.shape
+
+#x1,y1,x2,y2 = np.array(model(input_tensor))
 
 # %%
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 for wf in test_wforms[:10]:
     ax.plot(times[1:-1], wf)
+    #ax.plot(x1,y1)
+    #ax.plot(x2,y2)
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
 ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 
-ax.set_xlabel('time (s)')
-ax.set_ylabel('$h_{22}$')
+# ax.set_xlabel('time (s)')
+# ax.set_ylabel('$h_{22}$')
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
 
 # %%
 from scipy.integrate import odeint
@@ -441,11 +457,5 @@ history = model.fit(
     x_train, y_train, 
     batch_size=32, epochs=5, validation_split=0.2, verbose=1,
 )
-
-# %%
-
-
-plt.plot(model(x_train[:2])[0])
-
 
 # %%
