@@ -238,16 +238,15 @@ class UDEcell(keras.Layer):
 
         dy_correction = self.timestep/6. * (k1 + 2*k2 + 2*k3 + k4)
 
-        return  dy + 1e-4 * dy_correction
+        return  dy + dy_correction
 
         
 
 class UDE(keras.Model):
 
-    def __init__(self, partial_units_list, num_tsteps, timestep, q, use_real=True, **kwargs):
+    def __init__(self, partial_units_list, timestep, q, use_real=True, **kwargs):
 
         super(UDE, self).__init__(**kwargs)
-        self.num_tsteps = num_tsteps
         self.timestep = timestep
         self.q = q
         self.use_real = use_real
@@ -255,7 +254,7 @@ class UDE(keras.Model):
         self.udecell = UDEcell(partial_units_list,timestep)
 
 
-    def call(self, init_conditions_tensor, training=False):
+    def call(self, init_conditions_tensor, num_step, training=False):
 
         # input_tensor -> (None, 4)
         # sol -> (None, 4, int(tinterval/timestep))
@@ -265,7 +264,7 @@ class UDE(keras.Model):
         y = init_conditions_tensor
         sol = [y]
         
-        for i in range(self.num_tsteps):
+        for i in range(num_tsteps):
 
             y += self.udecell(y, training=training)
             sol.append(y)
@@ -304,6 +303,22 @@ class UDE(keras.Model):
         std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
         
         return tf.transpose((imag_part - mean) / std)     # (None, num_tsteps - 2)
+
+    @tf.function
+    def train_step(self, batch):
+        X,Y = batch
+        y_shape = tf.shape(Y)
+
+        with tf.GradientTape() as tape:
+            Y_pred = self(X, y_shape[-1], training=True)
+            train_loss = tf.reduce_mean((Y_pred-Y)**2)
+
+
+        gradients = tape.gradient(train_loss, self.trainable_weights)
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
+
+        return train_loss
+        
 
 
 
@@ -457,5 +472,34 @@ history = model.fit(
     x_train, y_train, 
     batch_size=32, epochs=5, validation_split=0.2, verbose=1,
 )
+
+# %% [markdown]
+# ### Unstable ODE integration?
+#
+# The network weights are initialized randomly. It is then possible that sometimes those weights are such that they lead to exponentionally diverging solutions. Let us linearize the r.h.s. of the UDE around the initial state and look at the eigenvalues of the matrix.
+
+# %%
+init_cell = UDEcell(partial_units_list, timestep)
+
+init_state = tf.convert_to_tensor([y0], dtype=tf.float32)
+
+units_list = [*partial_units_list, 4]
+fblock_rhs = Fblock(units_list)
+
+with tf.GradientTape(persistent=True) as tape:
+    tape.watch(init_state)
+    total_rhs = fiducial_rhs(init_state) + fblock_rhs(init_state)
+    final_rhs = total_rhs[0]
+
+init_jac = tape.jacobian(final_rhs, init_state)
+init_jac = tf.squeeze(init_jac, axis=1)
+
+init_jac.shape
+
+# %%
+tf.linalg.eigvals(init_jac)
+
+# %%
+timestep
 
 # %%
