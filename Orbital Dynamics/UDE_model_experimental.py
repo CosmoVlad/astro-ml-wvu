@@ -244,17 +244,20 @@ class UDEcell(keras.Layer):
 
 class UDE(keras.Model):
 
-    def __init__(self, partial_units_list, timestep, q, use_real=True, **kwargs):
+    def __init__(self, partial_units_list, num_steps, timestep, q, mean, std, use_real=True, **kwargs):
 
         super(UDE, self).__init__(**kwargs)
+        self.mean = mean
+        self.std = std
         self.timestep = timestep
+        self.num_steps = num_steps
         self.q = q
         self.use_real = use_real
 
         self.udecell = UDEcell(partial_units_list,timestep)
 
 
-    def call(self, init_conditions_tensor, num_step, training=False):
+    def call(self, init_conditions_tensor, training=False):
 
         # input_tensor -> (None, 4)
         # sol -> (None, 4, int(tinterval/timestep))
@@ -264,7 +267,7 @@ class UDE(keras.Model):
         y = init_conditions_tensor
         sol = [y]
         
-        for i in range(num_tsteps):
+        for i in range(self.num_steps-1):
 
             y += self.udecell(y, training=training)
             sol.append(y)
@@ -291,92 +294,92 @@ class UDE(keras.Model):
 
         if self.use_real:
             real_part = tf.math.real(waveform)
-            mean = tf.math.reduce_mean(real_part, axis=0, keepdims=True)
-            std = tf.math.reduce_std(real_part, axis=0, keepdims=True)
+            # mean = tf.math.reduce_mean(real_part, axis=0, keepdims=True)
+            # std = tf.math.reduce_std(real_part, axis=0, keepdims=True)
 
             
-            return tf.transpose((real_part - mean) / std)     # (None, num_tsteps - 2)
+            return tf.transpose((real_part - self.mean) / self.std)     # (None, num_tsteps - 2)
             #return x1,y1,x2,y2
 
         imag_part = tf.math.imag(waveform)
-        mean = tf.math.reduce_mean(imag_part, axis=0, keepdims=True)
-        std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
+        # mean = tf.math.reduce_mean(imag_part, axis=0, keepdims=True)
+        # std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
         
-        return tf.transpose((imag_part - mean) / std)     # (None, num_tsteps - 2)
+        return tf.transpose((imag_part - self.mean) / self.std)     # (None, num_tsteps - 2)
 
-    @tf.function
-    def train_step(self, batch):
-        X,Y = batch
-        y_shape = tf.shape(Y)
+    # @tf.function
+    # def train_step(self, batch):
+    #     X,Y = batch
+    #     y_shape = tf.shape(Y)
 
-        with tf.GradientTape() as tape:
-            Y_pred = self(X, y_shape[-1], training=True)
-            train_loss = tf.reduce_mean((Y_pred-Y)**2)
+    #     with tf.GradientTape() as tape:
+    #         Y_pred = self(X, y_shape[-1], training=True)
+    #         train_loss = tf.reduce_mean((Y_pred-Y)**2)
 
 
-        gradients = tape.gradient(train_loss, self.trainable_weights)
-        self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
+    #     gradients = tape.gradient(train_loss, self.trainable_weights)
+    #     self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
 
-        return train_loss
+    #     return train_loss
         
 
 
 
 # %%
 
-phi0 = 0.
-chi0 = np.pi
-p0 = 100.
-e0 = 0.5
+# phi0 = 0.
+# chi0 = np.pi
+# p0 = 100.
+# e0 = 0.5
 
 
-tinit = 0.
-tfin = 1e+4
+# tinit = 0.
+# tfin = 1e+4
 
-times = np.linspace(tinit, tfin, 51)
-dt = times[1] - times[0]
+# times = np.linspace(tinit, tfin, 51)
+# dt = times[1] - times[0]
 
-y0 = np.array(
-    [phi0,chi0,p0,e0]
-)
+# y0 = np.array(
+#     [phi0,chi0,p0,e0]
+# )
 
-batch_size = 2
+# batch_size = 2
 
-input_tensor = np.repeat([y0], batch_size, axis=0)
+# input_tensor = np.repeat([y0], batch_size, axis=0)
 
-timestep = times[1] - times[0]
-num_tsteps = int(times[-1]/timestep)
+# timestep = times[1] - times[0]
+# num_tsteps = int(times[-1]/timestep)
 
-input_tensor.shape
+# input_tensor.shape
 
-q = 0.01
-partial_units_list = [4,4]
+# q = 0.01
+# partial_units_list = [4,4]
 
-model = UDE(partial_units_list, num_tsteps, timestep, q)
+# model = UDE(partial_units_list, num_tsteps, timestep, q)
 
-test_wforms = np.array(model(input_tensor))
+# test_wforms = np.array(model(input_tensor))
 
-# test_wforms.shape
+# # test_wforms.shape
 
-#x1,y1,x2,y2 = np.array(model(input_tensor))
+# #x1,y1,x2,y2 = np.array(model(input_tensor))
 
 # %%
-fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+# fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
-for wf in test_wforms[:10]:
-    ax.plot(times[1:-1], wf)
-    #ax.plot(x1,y1)
-    #ax.plot(x2,y2)
+# for wf in test_wforms[:10]:
+#     ax.plot(times[1:-1], wf)
+#     #ax.plot(x1,y1)
+#     #ax.plot(x2,y2)
 
-ax.grid(True,linestyle=':',linewidth='1.')
-ax.xaxis.set_ticks_position('both')
-ax.yaxis.set_ticks_position('both')
-ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+# ax.grid(True,linestyle=':',linewidth='1.')
+# ax.xaxis.set_ticks_position('both')
+# ax.yaxis.set_ticks_position('both')
+# ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 
-# ax.set_xlabel('time (s)')
-# ax.set_ylabel('$h_{22}$')
-ax.set_xlabel('$x$')
-ax.set_ylabel('$y$')
+# # ax.set_xlabel('time (s)')
+# # ax.set_ylabel('$h_{22}$')
+# ax.set_xlabel('$x$')
+# ax.set_ylabel('$y$')
 
 # %%
 from scipy.integrate import odeint
@@ -407,14 +410,14 @@ q = 0.01
 tinit = 0.
 tfin = 1e+4
 
-times = np.linspace(tinit, tfin, 51)
+times = np.linspace(tinit, tfin, 251)
 dt = times[1] - times[0]
 
 y0 = np.array(
     [phi0,chi0,p0,e0]
 )
 
-sol = odeint(GR_rhs, y0, times)
+sol = odeint(GR_rhs, y0, times)   # (num_steps, 4)
 sol = tf.convert_to_tensor(sol, dtype=tf.float32)
 
 phi,chi,p,e = tf.unstack(sol, axis=-1)
@@ -429,7 +432,7 @@ true_wf = (true_wf - mean) / std
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf)
-ax.scatter((times[1:-1])[::1],true_wf[::1], s=10, color='black')
+ax.scatter((times[1:-1]),true_wf, s=10, color='black')
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
@@ -442,35 +445,68 @@ ax.set_ylabel('$y$')
 #ax.set_aspect('equal')
 
 # %%
-x_element = np.array(
-    [phi0,chi0,p0,e0]
-)
-y_element = true_wf[::1]
+# x_element = np.array(
+#     [phi0,chi0,p0,e0]
+# )
+# y_element = true_wf[::1]
 
+# train_size = 10000
+
+# x_train = tf.repeat([x_element], train_size, axis=0)
+# y_train = tf.repeat([y_element], train_size, axis=0)
+
+# x_train.shape, y_train.shape
+
+
+# %%
+rng = np.random.default_rng()
+
+slice_len = 4
+orbit_len = len(sol)
 train_size = 10000
 
-x_train = tf.repeat([x_element], train_size, axis=0)
-y_train = tf.repeat([y_element], train_size, axis=0)
+indices = rng.integers(low=0, high=orbit_len-slice_len, size=train_size)
 
-x_train.shape, y_train.shape
+# N - slice_len - 1 + slice_len - 2 = N - 3
 
+x_train = tf.gather(sol, indices)
+y_train = tf.stack([true_wf[i:i+slice_len-2] for i in indices])
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+################### plotting ###############
+
+ax.plot((times[1:-1]),true_wf, zorder=0)
+
+for h_slice,i in zip(y_train[:10], indices[:10]):
+    ax.scatter(times[1:-1][i:i+slice_len-2], h_slice, s=10, zorder=1)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
 
 # %%
+timestep = times[1] - times[0]
 
+q = 0.01
+partial_units_list = [32,32]
 
-model(x_train[:64]).shape
+model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
 
-# %%
 
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    optimizer=keras.optimizers.Adam(learning_rate=0.0001),
     loss=keras.losses.MeanSquaredError(),
 )
 
 # training
 history = model.fit(
     x_train, y_train, 
-    batch_size=32, epochs=5, validation_split=0.2, verbose=1,
+    batch_size=32, epochs=100, validation_split=0.2, verbose=1,
 )
 
 # %% [markdown]
