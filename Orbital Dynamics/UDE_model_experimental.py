@@ -173,6 +173,8 @@ def h22(phi,chi,p,e, q, dt):
 
     r = p / (1 + e*tf.math.cos(chi))
 
+    print(type(r))
+
     Jxx = Ixx - trace/3
     Jxy = Ixy
     Jyy = Iyy - trace/3
@@ -192,25 +194,25 @@ def h22(phi,chi,p,e, q, dt):
 
 class Fblock(keras.Layer):
 
-    def __init__(self, units_list):
-        super(Fblock, self).__init__()
-        self.dense1 = layers.Dense(units_list[0], activation='relu')
-        self.dense2 = layers.Dense(units_list[1], activation='relu')
+    def __init__(self, units_list, **kwargs):
+        super(Fblock, self).__init__(**kwargs)
+        self.dense1 = layers.Dense(units_list[0], activation='tanh')
+        self.dense2 = layers.Dense(units_list[1], activation='tanh')
         self.dense3 = layers.Dense(units_list[2], activation='tanh')
 
     def call(self, input_tensor, training=False):
 
-        x = self.dense1(input_tensor)
-        x = self.dense2(x)
-        x = self.dense3(x)
+        x = self.dense1(input_tensor, training=training)
+        x = self.dense2(x, training=training)
+        x = self.dense3(x, training=training)
 
         return x
 
 class UDEcell(keras.Layer):
     
-    def __init__(self, partial_units_list, timestep):
+    def __init__(self, partial_units_list, timestep, **kwargs):
         
-        super(UDEcell, self).__init__()
+        super(UDEcell, self).__init__(**kwargs)
         self.timestep = timestep
         self.partial_units_list = partial_units_list
 
@@ -231,10 +233,10 @@ class UDEcell(keras.Layer):
 
         dy = self.timestep/6. * (k1 + 2*k2 + 2*k3 + k4)
 
-        k1 = self.fblock(input_tensor)
-        k2 = self.fblock(input_tensor + self.timestep * k1/2.)
-        k3 = self.fblock(input_tensor + self.timestep * k2/2.)
-        k4 = self.fblock(input_tensor + self.timestep * k3)
+        k1 = self.fblock(input_tensor, training=training)
+        k2 = self.fblock(input_tensor + self.timestep * k1/2., training=training)
+        k3 = self.fblock(input_tensor + self.timestep * k2/2., training=training)
+        k4 = self.fblock(input_tensor + self.timestep * k3, training=training)
 
         dy_correction = self.timestep/6. * (k1 + 2*k2 + 2*k3 + k4)
 
@@ -410,7 +412,7 @@ q = 0.01
 tinit = 0.
 tfin = 1e+4
 
-times = np.linspace(tinit, tfin, 251)
+times = np.linspace(tinit, tfin, 1000)
 dt = times[1] - times[0]
 
 y0 = np.array(
@@ -432,7 +434,7 @@ true_wf = (true_wf - mean) / std
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf)
-ax.scatter((times[1:-1]),true_wf, s=10, color='black')
+ax.scatter((times[1:-1]),true_wf, s=5, color='black')
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
@@ -461,7 +463,7 @@ ax.set_ylabel('$y$')
 # %%
 rng = np.random.default_rng()
 
-slice_len = 4
+slice_len = 5
 orbit_len = len(sol)
 train_size = 10000
 
@@ -486,30 +488,82 @@ ax.xaxis.set_ticks_position('both')
 ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 
+ax.set_xlabel('time')
+ax.set_ylabel('${\\rm Re\,}h_{22}$')
+
+# %%
+timestep = times[1] - times[0]
+q = 0.01
+partial_units_list = [4,4]
+
+model = UDE(partial_units_list, slice_len, timestep, q, mean, std, dtype=tf.float32)
+
+y_pred = model(x_train[:10])
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+################### plotting ###############
+
+ax.plot((times[1:-1]),true_wf, zorder=0)
+
+for h_slice,i in zip(y_pred, indices[:10]):
+    ax.scatter(times[1:-1][i:i+slice_len-2], h_slice, s=10, zorder=1)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
 
 # %%
-timestep = times[1] - times[0]
+# timestep = times[1] - times[0]
 
-q = 0.01
-partial_units_list = [32,32]
+# q = 0.01
+# partial_units_list = [32,32]
 
-model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
+# model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
 
 
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.0001),
+    optimizer=keras.optimizers.Adam(learning_rate=0.0001, clipnorm=.0001),
     loss=keras.losses.MeanSquaredError(),
 )
 
 # training
 history = model.fit(
     x_train, y_train, 
-    batch_size=32, epochs=100, validation_split=0.2, verbose=1,
+    batch_size=128, epochs=200, validation_split=0.2, verbose=1,
 )
 
-# %% [markdown]
+# %%
+quality_dict = history.history
+
+plt.semilogy(quality_dict['loss'])
+plt.semilogy(quality_dict['val_loss'])
+
+# %%
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+################### plotting ###############
+
+ax.plot((times[1:-1]),true_wf, zorder=0)
+
+y_pred = model.predict(x_train[10:20])
+
+for h_slice,i in zip(y_pred, indices[10:20]):
+    ax.scatter(times[1:-1][i:i+slice_len-2], h_slice, s=10, zorder=1)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+# %% [markdown] jupyter={"source_hidden": true}
 # ### Unstable ODE integration?
 #
 # The network weights are initialized randomly. It is then possible that sometimes those weights are such that they lead to exponentionally diverging solutions. Let us linearize the r.h.s. of the UDE around the initial state and look at the eigenvalues of the matrix.
