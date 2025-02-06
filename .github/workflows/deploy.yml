@@ -17,4 +17,4 @@ jobs:
       - name: Install dependencies
         run: pip install mkdocs mkdocs-material mkdocstrings-python
       - name: Deploy
-        run: mkdocs gh-deploy --force
+        run: mkdocs sid/documentation --force
