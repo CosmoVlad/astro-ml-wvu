@@ -200,7 +200,7 @@ This module contains:
 
 from typing import List
 
-
+#Todo: compile the documentation to create a github.io page for the repo!
 class Fblock(keras.layers.Layer):
     """Feedforward block with three dense layers."""
 
@@ -213,8 +213,8 @@ class Fblock(keras.layers.Layer):
         super().__init__()
         if len(units_list) != 3:
             raise ValueError("units_list must have exactly three elements.")
-        self.dense1 = layers.Dense(units_list[0], activation='relu')
-        self.dense2 = layers.Dense(units_list[1], activation='relu')
+        self.dense1 = layers.Dense(units_list[0], activation='tanh')
+        self.dense2 = layers.Dense(units_list[1], activation='tanh')
         self.dense3 = layers.Dense(units_list[2], activation='tanh')
 
     def call(self, input_tensor: tf.Tensor, training: bool = False) -> tf.Tensor:
@@ -237,21 +237,24 @@ class Fblock(keras.layers.Layer):
             print(x0)
             print(x2)
         return tf.transpose(tf.convert_to_tensor([x1,x1,x2,x2]))
-
+        #return x
+        
 
 class UDEcell(keras.layers.Layer):
     """Runge-Kutta single-step evolver for neural network-based ODEs."""
 
-    def __init__(self, partial_units_list: List[int], timestep: float) -> None:
+    def __init__(self, partial_units_list: List[int], timestep: float, q: float) -> None:
         """Initializes the UDEcell layer.
 
         Args:
             partial_units_list (List[int]): List of integers specifying the hidden layer sizes.
             timestep (float): Time step for numerical integration.
+            q (float): Mass ratio of the system.
         """
         super().__init__()
         self.timestep = timestep
         self.partial_units_list = partial_units_list
+        self.q = q
 
     def build(self, input_shape: tf.TensorShape) -> None:
         """Builds the Fblock using the input shape.
@@ -261,6 +264,7 @@ class UDEcell(keras.layers.Layer):
         """
         #testing purely to evolve chi and phi
         units_list = [*self.partial_units_list, 2]
+        #units_list = [*self.partial_units_list, 4]
         self.fblock = Fblock(units_list)
 
     def call(self, input_tensor: tf.Tensor, training: bool = False) -> tf.Tensor:
@@ -280,14 +284,14 @@ class UDEcell(keras.layers.Layer):
         k4 = self.fiducial_rhs(input_tensor + self.timestep * k3)
         dy = self.timestep / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
-        k1 = self.fblock(input_tensor)
-        k2 = self.fblock(input_tensor + self.timestep * k1 / 2.0)
-        k3 = self.fblock(input_tensor + self.timestep * k2 / 2.0)
-        k4 = self.fblock(input_tensor + self.timestep * k3)
+        k1 = self.q*self.fblock(input_tensor)
+        k2 = self.q*self.fblock(input_tensor + self.timestep * k1 / 2.0)
+        k3 = self.q*self.fblock(input_tensor + self.timestep * k2 / 2.0)
+        k4 = self.q*self.fblock(input_tensor + self.timestep * k3)
         dy_correction = self.timestep / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
 
         return dy + dy_correction
-
+    #Todo: use a decorator so that it can be called outside of the class! 
     def fiducial_rhs(self,y: tf.Tensor) -> tf.Tensor:
         """Fiducial(Newtonian) right hand side for UDE.
 
@@ -314,6 +318,8 @@ class UDE(keras.Model):
         num_step: int,
         timestep: float,
         q: float,
+        mean: float,
+        stdev: float,
         use_real: bool = True,
         **kwargs,
     ) -> None:
@@ -324,6 +330,8 @@ class UDE(keras.Model):
             num_step (int): Number of integration steps.
             timestep (float): Time step for numerical integration.
             q (float): Mass ratio given by m_smaller/m_larger.
+            mean (float): Global mean of the waveform.
+            stdev (float): Global standard deviation of the waveform.
             use_real (bool, optional): Whether to use real part of the waveform. Defaults to True.
             **kwargs: Additional arguments for keras.Model.
         """
@@ -331,8 +339,10 @@ class UDE(keras.Model):
         self.timestep = timestep
         self.num_step = num_step
         self.q = q
+        self.mean = mean
+        self.stdev = stdev
         self.use_real = use_real
-        self.udecell = UDEcell(partial_units_list, timestep)
+        self.udecell = UDEcell(partial_units_list, timestep, q)
 
     def call(self, init_conditions_tensor: tf.Tensor, training: bool = False) -> tf.Tensor:
         """Integrate UDE and returns the waveform.
@@ -358,13 +368,9 @@ class UDE(keras.Model):
         waveform = self.h22(sol)
         if self.use_real:
             real_part = tf.math.real(waveform)
-            mean = tf.math.reduce_mean(real_part, axis=0, keepdims=True)
-            std = tf.math.reduce_std(real_part, axis=0, keepdims=True)
-            return tf.transpose((real_part - mean) / std)
+            return tf.transpose((real_part - self.mean) / self.stdev)
         imag_part = tf.math.imag(waveform)
-        mean = tf.math.reduce_mean(imag_part, axis=0, keepdims=True)
-        std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
-        return tf.transpose((imag_part - mean) / std)
+        return tf.transpose((imag_part - self.mean) / self.stdev)
         
     def h22(
         self,
@@ -423,10 +429,12 @@ if test_UDE_infrastructure:
     q = 0.01
     partial_units_list = [4,4]
     model = UDE(
-            partial_units_list=partial_units_list,
-            num_step=num_tsteps,
-            timestep=timestep,
-            q=q,
+        partial_units_list=partial_units_list,
+        num_step=num_tsteps,
+        timestep=timestep,
+        q=q,
+        mean=0,
+        stdev=1,
     )
     waveform = model(input_tensor)
     print(f"Expected input shape: ({batch_size},4), Actual input shape = {input_tensor.shape}")
@@ -495,13 +503,13 @@ class GR():
         waveform = self.h22(sol)
         if self.use_real:
             real_part = tf.math.real(waveform)
-            mean = tf.math.reduce_mean(real_part, axis=0, keepdims=True)
-            std = tf.math.reduce_std(real_part, axis=0, keepdims=True)
-            return tf.transpose((real_part - mean) / std)
+            mean = 0#tf.math.reduce_mean(real_part, axis=0, keepdims=True)
+            std = 1#tf.math.reduce_std(real_part, axis=0, keepdims=True)
+            return tf.transpose(real_part)
         imag_part = tf.math.imag(waveform)
-        mean = tf.math.reduce_mean(imag_part, axis=0, keepdims=True)
-        std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
-        return tf.transpose((imag_part - mean) / std)
+        #mean = tf.math.reduce_mean(imag_part, axis=0, keepdims=True)
+        #std = tf.math.reduce_std(imag_part, axis=0, keepdims=True)
+        return tf.transpose(imag_part)
         
     def GR_rhs(self,y: tf.Tensor) -> tf.Tensor:
         """GR right hand side for ODE.
@@ -617,24 +625,20 @@ if test_GR_infrastructure:
 rng = np.random.default_rng()
 gr_dynamics = sol[:,0]
 gr_waveforms = GR_waveform[0]
+gr_mean = tf.math.reduce_mean(gr_waveforms)
+gr_stdev = tf.math.reduce_std(gr_waveforms)
+gr_waveforms_norm = (gr_waveforms - gr_mean)/gr_stdev
 orbit_len = len(gr_dynamics)
-slice_len = min(6,orbit_len//5) #20% of orbit length
+slice_len = min(10,orbit_len//5) #20% of orbit length
 train_size = 100
 
 indices = rng.integers(low=0, high=orbit_len-slice_len, size=train_size)
 x_train = tf.gather(gr_dynamics, indices)
-y_train = tf.stack([gr_waveforms[i:i+slice_len-2] for i in indices])
-print(y_train.shape)
-def normalize_stack(y_stack):
-    y_train = y_stack
-    mean = tf.math.reduce_mean(y_train, axis=0, keepdims=True)
-    std = tf.math.reduce_std(y_train, axis=0, keepdims=True)
-    return (y_train - mean)/2
-
-y_train = normalize_stack(y_train)
+y_train = tf.stack([gr_waveforms_norm[i:i+slice_len-2] for i in indices])
+#print(y_train.shape)
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
-ax.plot((times[1:-1]),gr_waveforms)
+ax.plot((times[1:-1]),gr_waveforms_norm)
 for h_slice,i in zip(y_train,indices):
     ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
 
@@ -650,49 +654,67 @@ ax.set_ylabel('$y$')
 timestep = times[1] - times[0]
 q = 0.01
 partial_units_list = [12,25]
-model = UDE(partial_units_list,slice_len,timestep,q)
+gr_mean = tf.cast(gr_mean,dtype=tf.float32)
+gr_stdev = tf.cast(gr_stdev,dtype=tf.float32)
+model = UDE(partial_units_list,slice_len,timestep,q,gr_mean,gr_stdev)
 y_pred = model(x_train)
-print(y_pred)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot((times[1:-1]),gr_waveforms_norm)
+for h_slice,i in zip(y_pred,indices):
+    ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+# %%
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    optimizer=keras.optimizers.Adam(learning_rate=1e-5,clipnorm=.1),
     loss=keras.losses.MeanSquaredError(),
 )
 
 # training
 history = model.fit(
     x_train, y_train, 
-    batch_size=1000, epochs=20, validation_split=0.2, verbose=1,
+    batch_size=128, epochs=200, validation_split=0.2, verbose=1,
 )
+
+# %%
+quality_dict = history.history
+
+plt.semilogy(quality_dict['loss'])
+plt.semilogy(quality_dict['val_loss'])
 
 # %%
 phi0_p = 0.*(1 + .01)
 chi0_p = np.pi*(1 + .01)
-p0_p = 100.*(1 + .01)
-e0_p = 0.5*(1 + .01)
+p0_p = 100.
+e0_p = 0.5
 #q_p = 0.01*(1 + .01)
 
-input_tensor_p = np.array(
-    [[phi0_p,chi0_p,p0_p,e0_p]]
-)
+#input_tensor_p = np.array(
+#    [[phi0_p,chi0_p,p0_p,e0_p]]
+#)
 
-waveform = model(input_tensor_p,)
+waveform = model.predict(x_train)
 step_size = model.timestep
 step_count = model.num_step
-times = np.array([i*step_size for i in range(step_count)])
+#times = np.array([i*step_size for i in range(step_count)])
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
-print(waveform)
-for wf in waveform:
-    ax.plot(times[1:-1], wf)
-#ax.plot(x1,y1)
-#ax.plot(x2,y2)
+#print(waveform)
+ax.plot((times[1:-1]),gr_waveforms_norm)
+for h_slice,i in zip(waveform,indices):
+    ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
 ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
-
-# ax.set_xlabel('time (s)')
-# ax.set_ylabel('$h_{22}$')
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
 
