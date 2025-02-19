@@ -359,6 +359,18 @@ class UDE(keras.Model):
         ddJxy = (Jxy[2:] - 2*Jxy[1:-1] + Jxy[:-2]) / self.timestep**2
         imag_part = const * (- 2*ddJxy)
         return tf.complex(real_part, imag_part)
+    
+    def change_num_step(
+        self,
+        num_step: float,
+    ) -> None:
+        """
+        Change the number of timesteps over which RK integration is done.
+
+        Args:
+            num_step (float): Number of timesteps.
+        """
+        self.num_step = num_step
 
 test_UDE_infrastructure = True
 if test_UDE_infrastructure:
@@ -445,7 +457,6 @@ class GR():
         for _ in range(1,self.num_step):
             y += self.evolve(y)
             sol.append(y)
-        print(sol[2].dtype)
         sol = tf.convert_to_tensor(sol)
         self.sol = sol
         #phi, chi, p, e = tf.unstack(sol, axis=-1)
@@ -537,21 +548,27 @@ class GR():
 
 test_GR_infrastructure = True
 if test_GR_infrastructure:
-    phi0 = 0.
-    chi0 = np.pi
-    p0 = 100.
-    e0 = 0.5
+    batch_size = 100
+    model_sample = np.linspace(0.,1.,batch_size)
+    phi0 = 2*np.pi*model_sample
+    np.random.shuffle(phi0)
+    chi0 = 2*np.pi*model_sample
+    np.random.shuffle(chi0)
+    p0 = 50. + 100.*model_sample
+    np.random.shuffle(p0)
+    e0 = 0.5*model_sample
+    np.random.shuffle(e0)
     q = 0.01
     tinit = 0.
-    tfin = 1e+4
-    len_sol = 251
+    #select tfin so that at least 1 orbit is sampled in each case
+    a = p0 / (1 - e0**2)
+    Tkep = 2 * np.pi * np.sqrt(a**3)
+    tfin = Tkep.max()
+    len_sol = 252
     times = np.linspace(tinit, tfin, len_sol)
     dt = times[1] - times[0]
-    y0 = np.array(
-        [phi0,chi0,p0,e0]
-    )
-    batch_size = 2
-    input_tensor = np.repeat([y0], batch_size, axis=0)
+    y0 = np.c_[phi0,chi0,p0,e0]
+    input_tensor = tf.convert_to_tensor(y0)
     model_GR = GR(
         num_step=len_sol,
         timestep=dt,
@@ -560,9 +577,9 @@ if test_GR_infrastructure:
     GR_waveform = model_GR(input_tensor)
     sol = model_GR.sol
     fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
-    for true_wf in GR_waveform:
-        ax.plot((times[1:-1]),true_wf)
-        ax.scatter((times[1:-1])[::1],true_wf[::1], s=10, color='black')
+    true_wf = GR_waveform[0]
+    ax.plot((times[1:-1]),true_wf)
+    ax.scatter((times[1:-1])[::1],true_wf[::1], s=10, color='black')
     ax.grid(True,linestyle=':',linewidth='1.')
     ax.xaxis.set_ticks_position('both')
     ax.yaxis.set_ticks_position('both')
@@ -573,33 +590,68 @@ if test_GR_infrastructure:
     #ax.set_aspect('equal')    
 
 # %%
-rng = np.random.default_rng()
-gr_dynamics = sol[:,0]
-gr_waveforms = GR_waveform[0]
-gr_mean = tf.math.reduce_mean(gr_waveforms)
-gr_stdev = tf.math.reduce_std(gr_waveforms)
-gr_waveforms_norm = (gr_waveforms - gr_mean)/gr_stdev
-orbit_len = len(gr_dynamics)
-slice_len = min(10,orbit_len//5) #20% of orbit length
-train_size = 100
+single_traj_training = False
+if single_traj_training:
+    rng = np.random.default_rng()
+    gr_dynamics = sol[:,0]
+    gr_waveforms = GR_waveform[0]
+    gr_mean = tf.math.reduce_mean(gr_waveforms)
+    gr_stdev = tf.math.reduce_std(gr_waveforms)
+    gr_waveforms_norm = (gr_waveforms - gr_mean)/gr_stdev
+    orbit_len = len(gr_dynamics)
+    slice_len = min(10,orbit_len//5) #20% of orbit length
+    train_size = 100
+    indices = rng.integers(low=0, high=orbit_len-slice_len, size=train_size)
+    x_train = tf.gather(gr_dynamics, indices)
+    y_train = tf.stack([gr_waveforms_norm[i:i+slice_len-2] for i in indices])
+    #print(y_train.shape)
+    fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+    
+    ax.plot((times[1:-1]),gr_waveforms_norm)
+    for h_slice,i in zip(y_train,indices):
+        ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
+    
+    ax.grid(True,linestyle=':',linewidth='1.')
+    ax.xaxis.set_ticks_position('both')
+    ax.yaxis.set_ticks_position('both')
+    ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+    
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$y$')
 
-indices = rng.integers(low=0, high=orbit_len-slice_len, size=train_size)
-x_train = tf.gather(gr_dynamics, indices)
-y_train = tf.stack([gr_waveforms_norm[i:i+slice_len-2] for i in indices])
-#print(y_train.shape)
-fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+else:
+    orbit_len = len(sol)
+    slice_len = (orbit_len//10) #~10% of orbit length
+    num_cases = 10
+    train_size = batch_size*num_cases
+    rng = np.random.default_rng()
+    gr_mean = tf.math.reduce_mean(GR_waveform)
+    gr_stdev = tf.math.reduce_std(GR_waveform)
+    gr_waveforms_norm = (GR_waveform - gr_mean)/gr_stdev
+    orbit_len = len(sol)
+    indices = rng.integers(low=0, high=orbit_len-slice_len, size=num_cases)
+    x_train_noflat = tf.gather(sol,indices)
+    x_train = tf.reshape(x_train_noflat,(train_size,4))
+    y_train_noflat = tf.convert_to_tensor([gr_waveforms_norm[:,i:i+slice_len-2] for i in indices])
+    y_train = tf.reshape(y_train_noflat,(train_size,slice_len - 2))
+    print(y_train_noflat.shape)
+    print(y_train.shape)
+    print(y_train[3])
+    fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+    i_plot = rng.integers(low=0,high=batch_size)
+    ax.plot((times[1:-1]),gr_waveforms_norm[i_plot])
+    for i in range(len(indices)):
+        h_slice = y_train[(i)*batch_size + i_plot]
+        ax.scatter((times[indices[i]:indices[i]+slice_len-2]),h_slice, s=10,)
+    
+    ax.grid(True,linestyle=':',linewidth='1.')
+    ax.xaxis.set_ticks_position('both')
+    ax.yaxis.set_ticks_position('both')
+    ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+    
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$y$')
 
-ax.plot((times[1:-1]),gr_waveforms_norm)
-for h_slice,i in zip(y_train,indices):
-    ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
-
-ax.grid(True,linestyle=':',linewidth='1.')
-ax.xaxis.set_ticks_position('both')
-ax.yaxis.set_ticks_position('both')
-ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
-
-ax.set_xlabel('$x$')
-ax.set_ylabel('$y$')
 
 # %%
 timestep = times[1] - times[0]
@@ -607,32 +659,37 @@ q = 0.01
 partial_units_list = [12,25]
 gr_mean = tf.cast(gr_mean,dtype=tf.float32)
 gr_stdev = tf.cast(gr_stdev,dtype=tf.float32)
-model = UDE(partial_units_list,slice_len,timestep,q,gr_mean,gr_stdev)
+model = UDE(partial_units_list,slice_len,model_GR.timestep,q,gr_mean,gr_stdev)
 y_pred = model(x_train)
-
+print(y_pred.shape)
+i_plot = rng.integers(low=0,high=batch_size)
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
-
-ax.plot((times[1:-1]),gr_waveforms_norm)
-for h_slice,i in zip(y_pred,indices):
-    ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
-
+ax.plot((times[1:-1]),gr_waveforms_norm[i_plot])
+for i in range(len(indices)):
+    idx = indices[i]
+    h_slice = y_pred[i*batch_size + i_plot]
+    ax.scatter((times[idx:idx+slice_len-2]),h_slice, s=10,)
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
 ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
 
+
 # %%
+model.change_num_step(slice_len)
+
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=1e-5,clipnorm=.1),
+    optimizer=keras.optimizers.Adam(learning_rate=1e-5,clipnorm=.01),
     loss=keras.losses.MeanSquaredError(),
 )
 
 # training
 history = model.fit(
     x_train, y_train, 
-    batch_size=128, epochs=200, validation_split=0.2, verbose=1,
+    batch_size=100, epochs=300, validation_split=0.2, verbose=1,
 )
 
 # %%
@@ -642,25 +699,33 @@ plt.semilogy(quality_dict['loss'])
 plt.semilogy(quality_dict['val_loss'])
 
 # %%
-phi0_p = 0.*(1 + .01)
-chi0_p = np.pi*(1 + .01)
-p0_p = 100.
-e0_p = 0.5
+phi0_p = 0.
+chi0_p = np.pi
+p0_p = rng.uniform(50.,150.)
+e0_p = rng.uniform(0.,0.5)
 #q_p = 0.01*(1 + .01)
 
-#input_tensor_p = np.array(
-#    [[phi0_p,chi0_p,p0_p,e0_p]]
-#)
+y_0 = np.array(
+    [phi0_p,chi0_p,p0_p,e0_p]
+)
 
-waveform = model.predict(x_train)
+input_tensor_p = np.array(
+    [[phi0_p,chi0_p,p0_p,e0_p]]
+)
+
+ground_truth_waveform = (tf.cast(model_GR(input_tensor_p),dtype = tf.float32)[0] - gr_mean)/gr_stdev
+
+model.change_num_step(model_GR.num_step)
+waveform_ude = model.predict(input_tensor_p)
+predicted_waveform = waveform_ude[0]
 step_size = model.timestep
 step_count = model.num_step
 #times = np.array([i*step_size for i in range(step_count)])
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 #print(waveform)
-ax.plot((times[1:-1]),gr_waveforms_norm)
-for h_slice,i in zip(waveform,indices):
-    ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
+
+ax.plot((times[1:-1]),ground_truth_waveform)
+ax.scatter((times[1:-1]),predicted_waveform, s=10,)
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
@@ -668,5 +733,12 @@ ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
+# %% [markdown]
+# ### Strategies:
+#
+# 1. $q$ -> This is only used for waveform generation so make this a model parameter in the GR and UDE classes
+# 2. Make the NN rhs function of cosine chi instead of chi.
+# 3. Add a function to change the number of timesteps in both GR and UDE classes.
+# 4. GEnerate GR data for multiple mass ratios
+# 5. Instead of using normalized waveforms, try using the mean squared percentage error so that predicted waveforms have the correct scaling.
 
-# %%
