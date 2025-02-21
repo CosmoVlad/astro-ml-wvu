@@ -743,7 +743,6 @@ history = model.fit(
 
 # %%
 quality_dict = history.history
-
 plt.semilogy(quality_dict['loss'])
 plt.semilogy(quality_dict['val_loss'])
 
@@ -762,7 +761,7 @@ input_tensor_p = np.array(
     [[phi0_p,chi0_p,p0_p,e0_p]]
 )
 
-ground_truth_waveform = (tf.cast(model_GR(input_tensor_p),dtype = tf.float32)[0] - gr_mean)/gr_stdev
+ground_truth_waveform = (tf.cast(model_GR(input_tensor_p),dtype = tf.float32)[0] - tf.cast(gr_mean,dtype = tf.float32))/tf.cast(gr_stdev,dtype = tf.float32)
 
 model.change_num_step(model_GR.num_step)
 waveform_ude = model.predict(input_tensor_p)
@@ -782,6 +781,9 @@ ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
+
+# %%
+model.save("sids_emri_training_model.keras")
 
 # %% [markdown]
 # ### Strategies:
@@ -817,10 +819,5 @@ tf.linalg.eigvals(init_jac)
 timestep
 
 # %%
-a = np.arange(0.,1.,0.1)
-b = 10*a
-c = 100*a
-
-print(np.c_[a,b,c])
 
 # %%
