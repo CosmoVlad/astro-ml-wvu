@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.6
+#       jupytext_version: 1.16.5
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -57,7 +57,6 @@ ax.set_ylabel('$y$')
 
 fig.tight_layout()
 fig.savefig('test.pdf')
-
 
 # %% [markdown]
 # ## Paper summary
@@ -140,54 +139,6 @@ fig.savefig('test.pdf')
 # where $J(\mathbf{x},t) = \sum_{k} \big( w_k - w(t) \big)^2\delta(t-t_k)$
 # and bracket notation, $\langle \cdot \rangle$, denotes 
 # denotes averaging over the time interval.
-
-# %%
-def fiducial_rhs(y):     # t -> t/M:   G=c=1
-                        # M -> GM/c^3
-
-    # y -> (None, 4)
-    
-    phi,chi,p,e = tf.unstack(y, axis=-1)
-
-    phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
-    chi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
-    p_dot = tf.zeros(tf.shape(phi_dot))
-    e_dot = tf.zeros(tf.shape(phi_dot))
-
-    return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot]))   # (None, 4)
-
-def h22(phi,chi,p,e, q, dt):
-
-    r = p / (1 + e*tf.math.cos(chi))    # (num_tsteps, None)
-
-    x1 = r * q/(1+q) * tf.math.cos(phi)
-    y1 = r * q/(1+q) * tf.math.sin(phi)
-
-    x2 = -r * 1/(1+q) * tf.math.cos(phi)
-    y2 = -r * 1/(1+q) * tf.math.sin(phi)
-
-    Ixx = x1**2 + q*x2**2
-    Iyy = y1**2 + q*y2**2
-    Ixy = x1*y1 + q*x2*y2
-
-    trace = Ixx + Iyy
-
-    r = p / (1 + e*tf.math.cos(chi))
-
-    Jxx = Ixx - trace/3
-    Jxy = Ixy
-    Jyy = Iyy - trace/3
-
-    ddJxx = (Jxx[2:] - 2*Jxx[1:-1] + Jxx[:-2]) / dt**2
-    ddJxy = (Jxy[2:] - 2*Jxy[1:-1] + Jxy[:-2]) / dt**2
-    ddJyy = (Jyy[2:] - 2*Jyy[1:-1] + Jyy[:-2]) / dt**2
-
-    const = 1/r[1:-1] * tf.math.sqrt(4*np.pi/5)
-    real_part = const * (ddJxx - ddJyy)
-    imag_part = const * (- 2*ddJxy)
-
-    return tf.complex(real_part, imag_part)  # (num_tsteps, None)
-
 
 # %%
 """Defines neural network layers for a Universal Differential Equation (UDE) model.
@@ -781,6 +732,7 @@ ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
+<<<<<<< HEAD
 
 # %%
 model.save("sids_emri_training_model.keras")
@@ -821,3 +773,5 @@ timestep
 # %%
 
 # %%
+=======
+>>>>>>> f5e05cfdd3eb81a7f9037e1550e877d0ab4d7ea1
