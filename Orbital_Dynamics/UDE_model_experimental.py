@@ -732,7 +732,7 @@ ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
-<<<<<<< HEAD
+
 
 # %%
 model.save("sids_emri_training_model.keras")
@@ -773,5 +773,3 @@ timestep
 # %%
 
 # %%
-=======
->>>>>>> f5e05cfdd3eb81a7f9037e1550e877d0ab4d7ea1
