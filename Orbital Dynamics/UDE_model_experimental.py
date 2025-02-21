@@ -246,20 +246,19 @@ class UDEcell(keras.Layer):
 
 class UDE(keras.Model):
 
-    def __init__(self, partial_units_list, num_steps, timestep, q, mean, std, use_real=True, **kwargs):
+    def __init__(self, partial_units_list, timestep, q, mean, std, use_real=True, **kwargs):
 
         super(UDE, self).__init__(**kwargs)
         self.mean = mean
         self.std = std
         self.timestep = timestep
-        self.num_steps = num_steps
+        #self.num_steps = num_steps
         self.q = q
         self.use_real = use_real
 
         self.udecell = UDEcell(partial_units_list,timestep)
 
-
-    def call(self, init_conditions_tensor, training=False):
+    def call(self, init_conditions_tensor, num_steps, training=False):
 
         # input_tensor -> (None, 4)
         # sol -> (None, 4, int(tinterval/timestep))
@@ -269,7 +268,7 @@ class UDE(keras.Model):
         y = init_conditions_tensor
         sol = [y]
         
-        for i in range(self.num_steps-1):
+        for i in range(num_steps-1):
 
             y += self.udecell(y, training=training)
             sol.append(y)
@@ -309,21 +308,29 @@ class UDE(keras.Model):
         
         return tf.transpose((imag_part - self.mean) / self.std)     # (None, num_tsteps - 2)
 
-    # @tf.function
-    # def train_step(self, batch):
-    #     X,Y = batch
-    #     y_shape = tf.shape(Y)
+    def train_step(self, batch):
+        X,Y = batch
+        y_shape = tf.shape(Y)    # (None, num_steps-2)
 
-    #     with tf.GradientTape() as tape:
-    #         Y_pred = self(X, y_shape[-1], training=True)
-    #         train_loss = tf.reduce_mean((Y_pred-Y)**2)
+        with tf.GradientTape() as tape:
+            Y_pred = self(X, y_shape[1] + 2, training=True)   # (None, num_steps-2)
+            train_loss = tf.reduce_mean((Y_pred-Y)**2)
 
 
-    #     gradients = tape.gradient(train_loss, self.trainable_weights)
-    #     self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
+        gradients = tape.gradient(train_loss, self.trainable_weights)
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
 
-    #     return train_loss
+        return train_loss
         
+
+    def test_step(self, batch):
+        X,Y = batch
+        y_shape = tf.shape(Y)    # (None, num_steps-2)
+
+        Y_pred = self(X, y_shape[1] + 2, training=False)   # (None, num_steps-2)
+        test_loss = tf.reduce_mean((Y_pred-Y)**2)
+
+        return test_loss
 
 
 
@@ -496,9 +503,9 @@ timestep = times[1] - times[0]
 q = 0.01
 partial_units_list = [4,4]
 
-model = UDE(partial_units_list, slice_len, timestep, q, mean, std, dtype=tf.float32)
+model = UDE(partial_units_list, timestep, q, mean, std, dtype=tf.float32)
 
-y_pred = model(x_train[:10])
+y_pred = model(x_train[:10], num_steps=slice_len)
 
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
@@ -525,17 +532,64 @@ ax.set_ylabel('$y$')
 
 # model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
 
-
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.0001, clipnorm=.0001),
+    optimizer=keras.optimizers.Adam(learning_rate=0.0001, clipnorm=.1),
     loss=keras.losses.MeanSquaredError(),
 )
 
-# training
-history = model.fit(
-    x_train, y_train, 
-    batch_size=128, epochs=200, validation_split=0.2, verbose=1,
-)
+# # training
+# history = model.fit(
+#     x_train, y_train, 
+#     batch_size=128, epochs=200, validation_split=0.2, verbose=1,
+# )
+
+# %%
+
+batch_size=128
+epochs=10
+steps_per_epoch=100
+
+indices=np.arange(x_train.shape[0])
+
+rng.shuffle(indices)
+
+for epoch in range(epochs):
+
+    tot_loss = 0.
+
+    for step in range(steps_per_epoch):
+
+        batch_ids = rng.choice(indices, size=batch_size, replace=False)
+        batch = (
+            tf.gather(x_train, batch_ids), tf.gather(x_train, batch_ids)
+        )
+
+        train_loss = model.train_step(batch)
+
+        tot_loss += train_loss
+        tot_loss /= step + 1
+
+    print(tot_loss)
+
+    rng.shuffle(indices)
+
+    tot_loss = 0.
+        
+    for step in range(int(steps_per_epoch/4)):
+
+        batch_ids = rng.choice(indices, size=batch_size, replace=False)
+        batch = (
+            tf.gather(x_train, batch_ids), tf.gather(x_train, batch_ids)
+        )
+
+        val_loss = model.test_step(batch)
+
+        tot_loss += val_loss
+        tot_loss /= step + 1
+
+    print(tot_loss)
+
+    rng.shuffle(indices)
 
 # %%
 quality_dict = history.history
@@ -563,7 +617,7 @@ ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('$x$')
 ax.set_ylabel('$y$')
 
-# %% [markdown] jupyter={"source_hidden": true}
+# %% [markdown]
 # ### Unstable ODE integration?
 #
 # The network weights are initialized randomly. It is then possible that sometimes those weights are such that they lead to exponentionally diverging solutions. Let us linearize the r.h.s. of the UDE around the initial state and look at the eigenvalues of the matrix.
