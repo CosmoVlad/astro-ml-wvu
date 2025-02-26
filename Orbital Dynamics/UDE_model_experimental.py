@@ -196,9 +196,9 @@ class Fblock(keras.Layer):
 
     def __init__(self, units_list, **kwargs):
         super(Fblock, self).__init__(**kwargs)
-        self.dense1 = layers.Dense(units_list[0], activation='tanh')
-        self.dense2 = layers.Dense(units_list[1], activation='tanh')
-        self.dense3 = layers.Dense(units_list[2], activation='tanh')
+        self.dense1 = layers.Dense(units_list[0], activation='tanh', kernel_initializer='zeros')
+        self.dense2 = layers.Dense(units_list[1], activation='tanh', kernel_initializer='zeros')
+        self.dense3 = layers.Dense(units_list[2], activation='tanh', kernel_initializer='zeros')
 
     def call(self, input_tensor, training=False):
 
@@ -308,12 +308,12 @@ class UDE(keras.Model):
         
         return tf.transpose((imag_part - self.mean) / self.std)     # (None, num_tsteps - 2)
 
-    def train_step(self, batch):
+    @tf.function
+    def train_step(self, batch, slice_len):
         X,Y = batch
-        y_shape = tf.shape(Y)    # (None, num_steps-2)
-
+        
         with tf.GradientTape() as tape:
-            Y_pred = self(X, y_shape[1] + 2, training=True)   # (None, num_steps-2)
+            Y_pred = self(X, num_steps=slice_len+2, training=True)   # (None, num_steps-2)
             train_loss = tf.reduce_mean((Y_pred-Y)**2)
 
 
@@ -322,12 +322,11 @@ class UDE(keras.Model):
 
         return train_loss
         
-
-    def test_step(self, batch):
+    @tf.function
+    def test_step(self, batch, slice_len):
         X,Y = batch
-        y_shape = tf.shape(Y)    # (None, num_steps-2)
 
-        Y_pred = self(X, y_shape[1] + 2, training=False)   # (None, num_steps-2)
+        Y_pred = self(X, num_steps=slice_len+2, training=False)   # (None, num_steps-2)
         test_loss = tf.reduce_mean((Y_pred-Y)**2)
 
         return test_loss
@@ -470,16 +469,16 @@ ax.set_ylabel('$y$')
 # %%
 rng = np.random.default_rng()
 
-slice_len = 5
+slice_len_traj = 10
 orbit_len = len(sol)
 train_size = 10000
 
-indices = rng.integers(low=0, high=orbit_len-slice_len, size=train_size)
+traj_indices = rng.integers(low=0, high=orbit_len-slice_len_traj, size=train_size)
 
 # N - slice_len - 1 + slice_len - 2 = N - 3
 
-x_train = tf.gather(sol, indices)
-y_train = tf.stack([true_wf[i:i+slice_len-2] for i in indices])
+x_train = tf.gather(sol, traj_indices)
+y_train = tf.stack([true_wf[i:i+slice_len_traj-2] for i in traj_indices])
 
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
@@ -487,8 +486,10 @@ fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf, zorder=0)
 
-for h_slice,i in zip(y_train[:10], indices[:10]):
-    ax.scatter(times[1:-1][i:i+slice_len-2], h_slice, s=10, zorder=1)
+for h_slice,i in zip(y_train[:10], traj_indices[:10]):
+    ax.scatter(times[1:-1][i:i+slice_len_traj-2], h_slice, s=10, zorder=1)
+
+print(h_slice.shape)
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
@@ -501,11 +502,11 @@ ax.set_ylabel('${\\rm Re\,}h_{22}$')
 # %%
 timestep = times[1] - times[0]
 q = 0.01
-partial_units_list = [4,4]
+partial_units_list = [16,8]
 
 model = UDE(partial_units_list, timestep, q, mean, std, dtype=tf.float32)
 
-y_pred = model(x_train[:10], num_steps=slice_len)
+y_pred = model(x_train[:10], num_steps=slice_len_traj)
 
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
@@ -513,8 +514,8 @@ fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf, zorder=0)
 
-for h_slice,i in zip(y_pred, indices[:10]):
-    ax.scatter(times[1:-1][i:i+slice_len-2], h_slice, s=10, zorder=1)
+for h_slice,i in zip(y_pred, traj_indices[:10]):
+    ax.scatter(times[1:-1][i:i+slice_len_traj-2], h_slice, s=10, zorder=1)
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
@@ -533,7 +534,7 @@ ax.set_ylabel('$y$')
 # model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
 
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.0001, clipnorm=.1),
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
     loss=keras.losses.MeanSquaredError(),
 )
 
@@ -544,58 +545,70 @@ model.compile(
 # )
 
 # %%
+from tqdm.notebook import tqdm
+
 
 batch_size=128
-epochs=10
-steps_per_epoch=100
+num_epochs=100
+steps_per_epoch=int(len(x_train)/batch_size)
 
 indices=np.arange(x_train.shape[0])
 
 rng.shuffle(indices)
 
-for epoch in range(epochs):
+custom_history = {}
+custom_history['loss'] = []
+custom_history['val_loss'] = []
 
-    tot_loss = 0.
+for epoch in range(num_epochs):
 
-    for step in range(steps_per_epoch):
+    train_loss = 0.
+    val_loss = 0.
+
+    tepoch = tqdm(
+            range(steps_per_epoch),
+            desc=f"Epoch {epoch+1}/{num_epochs}"
+    )
+
+    for idx in tepoch:
 
         batch_ids = rng.choice(indices, size=batch_size, replace=False)
         batch = (
-            tf.gather(x_train, batch_ids), tf.gather(x_train, batch_ids)
+            tf.gather(x_train, batch_ids), tf.gather(y_train, batch_ids)
         )
 
-        train_loss = model.train_step(batch)
+        slice_len = y_train.shape[1]
 
-        tot_loss += train_loss
-        tot_loss /= step + 1
+        loss = model.train_step(batch, slice_len=slice_len)
+        train_loss += loss.numpy()
+        tepoch.set_postfix_str("batch={:d}, train loss={:.4f}".format(idx+1, train_loss/(idx+1)))
 
-    print(tot_loss)
+    custom_history['loss'].append(train_loss/(idx+1))
 
     rng.shuffle(indices)
 
-    tot_loss = 0.
         
     for step in range(int(steps_per_epoch/4)):
 
         batch_ids = rng.choice(indices, size=batch_size, replace=False)
         batch = (
-            tf.gather(x_train, batch_ids), tf.gather(x_train, batch_ids)
+            tf.gather(x_train, batch_ids), tf.gather(y_train, batch_ids)
         )
 
-        val_loss = model.test_step(batch)
+        loss = model.test_step(batch, slice_len=slice_len)
+        val_loss += loss.numpy()
 
-        tot_loss += val_loss
-        tot_loss /= step + 1
+    val_loss /= step + 1
+    print("val loss={:.4f}".format(val_loss))
 
-    print(tot_loss)
+    custom_history['val_loss'].append(val_loss)
 
     rng.shuffle(indices)
 
 # %%
-quality_dict = history.history
 
-plt.semilogy(quality_dict['loss'])
-plt.semilogy(quality_dict['val_loss'])
+plt.semilogy(custom_history['loss'])
+plt.semilogy(custom_history['val_loss'])
 
 # %%
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
@@ -604,10 +617,12 @@ fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf, zorder=0)
 
-y_pred = model.predict(x_train[10:20])
+predict_len_traj = slice_len_traj + 100
 
-for h_slice,i in zip(y_pred, indices[10:20]):
-    ax.scatter(times[1:-1][i:i+slice_len-2], h_slice, s=10, zorder=1)
+y_pred = model(x_train[10:20], num_steps=predict_len_traj)
+
+for h_slice,i in zip(y_pred, traj_indices[10:20]):
+    ax.scatter(times[1:-1][i:i+predict_len_traj-2], h_slice, s=10, zorder=1)
 
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
@@ -645,5 +660,11 @@ tf.linalg.eigvals(init_jac)
 
 # %%
 timestep
+
+# %%
+type(tf.shape(y_train)[1].numpy())
+
+# %%
+batch[1]
 
 # %%
