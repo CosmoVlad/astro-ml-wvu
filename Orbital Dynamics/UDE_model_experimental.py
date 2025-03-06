@@ -150,10 +150,10 @@ def fiducial_rhs(y):     # t -> t/M:   G=c=1
 
     phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
     chi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5
-    p_dot = tf.zeros(tf.shape(phi_dot))
-    e_dot = tf.zeros(tf.shape(phi_dot))
+    p_dot = tf.zeros(tf.shape(phi_dot), dtype=y.dtype)
+    e_dot = tf.zeros(tf.shape(phi_dot), dtype=y.dtype)
 
-    return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot]))   # (None, 4)
+    return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot], dtype=y.dtype))   # (None, 4)
 
 def h22(phi,chi,p,e, q, dt):
 
@@ -183,7 +183,7 @@ def h22(phi,chi,p,e, q, dt):
     ddJxy = (Jxy[2:] - 2*Jxy[1:-1] + Jxy[:-2]) / dt**2
     ddJyy = (Jyy[2:] - 2*Jyy[1:-1] + Jyy[:-2]) / dt**2
 
-    const = 1/r[1:-1] * tf.math.sqrt(4*np.pi/5)
+    const = 1/r[1:-1] * tf.math.sqrt(4*tf.constant(np.pi, dtype=r.dtype)/5)
     real_part = const * (ddJxx - ddJyy)
     imag_part = const * (- 2*ddJxy)
 
@@ -196,9 +196,9 @@ class Fblock(keras.Layer):
 
     def __init__(self, units_list, **kwargs):
         super(Fblock, self).__init__(**kwargs)
-        self.dense1 = layers.Dense(units_list[0], activation='tanh', kernel_initializer='zeros')
-        self.dense2 = layers.Dense(units_list[1], activation='tanh', kernel_initializer='zeros')
-        self.dense3 = layers.Dense(units_list[2], activation='tanh', kernel_initializer='zeros')
+        self.dense1 = layers.Dense(units_list[0], activation='tanh', kernel_initializer='zeros', **kwargs)
+        self.dense2 = layers.Dense(units_list[1], activation='tanh', kernel_initializer='zeros', **kwargs)
+        self.dense3 = layers.Dense(units_list[2], activation='tanh', kernel_initializer='zeros', **kwargs)
 
     def call(self, input_tensor, training=False):
 
@@ -215,17 +215,18 @@ class UDEcell(keras.Layer):
         super(UDEcell, self).__init__(**kwargs)
         self.timestep = timestep
         self.partial_units_list = partial_units_list
+        self._dtype = kwargs.get('dtype', tf.float32)
 
     # partial_units_list = [32,32]
     # [*partial_units_list, 4]  -> [32,32,4]
 
     def build(self, input_dim):    # (None, 4)
         units_list = [*self.partial_units_list, input_dim[-1]]
-        self.fblock = Fblock(units_list)
+        self.fblock = Fblock(units_list, dtype=self._dtype)
 
     def call(self, input_tensor, training=False):  # input_tensor -> (None, 4)
 
-
+        
         k1 = fiducial_rhs(input_tensor)
         k2 = fiducial_rhs(input_tensor + self.timestep * k1/2.)
         k3 = fiducial_rhs(input_tensor + self.timestep * k2/2.)
@@ -256,7 +257,7 @@ class UDE(keras.Model):
         self.q = q
         self.use_real = use_real
 
-        self.udecell = UDEcell(partial_units_list,timestep)
+        self.udecell = UDEcell(partial_units_list,timestep, **kwargs)
 
     def call(self, init_conditions_tensor, num_steps, training=False):
 
@@ -407,6 +408,8 @@ def GR_rhs(y,t):     # t -> t/M:   G=c=1
 
 
 # %%
+dtype = tf.float64
+
 phi0 = 0.
 chi0 = np.pi
 p0 = 100.
@@ -426,7 +429,7 @@ y0 = np.array(
 )
 
 sol = odeint(GR_rhs, y0, times)   # (num_steps, 4)
-sol = tf.convert_to_tensor(sol, dtype=tf.float32)
+sol = tf.convert_to_tensor(sol, dtype=dtype)
 
 phi,chi,p,e = tf.unstack(sol, axis=-1)
 
@@ -469,16 +472,21 @@ ax.set_ylabel('$y$')
 # %%
 rng = np.random.default_rng()
 
-slice_len_traj = 10
+def generate_slices(orbit_len, slice_len_traj, train_size=10000):
+
+    traj_indices = rng.integers(low=0, high=orbit_len-slice_len_traj, size=train_size)
+    
+    # N - slice_len - 1 + slice_len - 2 = N - 3
+    
+    x_train = tf.gather(sol, traj_indices)
+    y_train = tf.stack([true_wf[i:i+slice_len_traj-2] for i in traj_indices])
+
+    return x_train,y_train,traj_indices
+
+slice_len_traj = 5
 orbit_len = len(sol)
-train_size = 10000
 
-traj_indices = rng.integers(low=0, high=orbit_len-slice_len_traj, size=train_size)
-
-# N - slice_len - 1 + slice_len - 2 = N - 3
-
-x_train = tf.gather(sol, traj_indices)
-y_train = tf.stack([true_wf[i:i+slice_len_traj-2] for i in traj_indices])
+x_train,y_train,traj_indices = generate_slices(orbit_len, slice_len_traj=slice_len_traj)
 
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
@@ -501,10 +509,11 @@ ax.set_ylabel('${\\rm Re\,}h_{22}$')
 
 # %%
 timestep = times[1] - times[0]
+timestep = tf.constant(timestep, dtype=dtype)
 q = 0.01
-partial_units_list = [16,8]
+partial_units_list = [4,4]
 
-model = UDE(partial_units_list, timestep, q, mean, std, dtype=tf.float32)
+model = UDE(partial_units_list, timestep, q, mean, std, dtype=dtype)
 
 y_pred = model(x_train[:10], num_steps=slice_len_traj)
 
@@ -534,7 +543,7 @@ ax.set_ylabel('$y$')
 # model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
 
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    optimizer=keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.),
     loss=keras.losses.MeanSquaredError(),
 )
 
@@ -549,7 +558,7 @@ from tqdm.notebook import tqdm
 
 
 batch_size=128
-num_epochs=100
+num_epochs=30
 steps_per_epoch=int(len(x_train)/batch_size)
 
 indices=np.arange(x_train.shape[0])
@@ -617,7 +626,7 @@ fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf, zorder=0)
 
-predict_len_traj = slice_len_traj + 100
+predict_len_traj = slice_len_traj + 5
 
 y_pred = model(x_train[10:20], num_steps=predict_len_traj)
 
@@ -629,8 +638,126 @@ ax.xaxis.set_ticks_position('both')
 ax.yaxis.set_ticks_position('both')
 ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 
-ax.set_xlabel('$x$')
-ax.set_ylabel('$y$')
+ax.set_xlabel('time')
+ax.set_ylabel('${\\rm Re} h_{22}$')
+
+# %%
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+start_id = np.argmin(traj_indices)
+x_start = x_train[start_id][tf.newaxis,...]
+
+predict_len_traj = 1000
+print(predict_len_traj)
+
+################### plotting ###############
+
+ax.plot((times[1:-1]),true_wf, zorder=0)
+
+
+y_pred = model(x_start, num_steps=predict_len_traj)
+print(y_pred.shape)
+
+ax.scatter(times[:predict_len_traj][1:-1], y_pred[0], s=10, zorder=1)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('time')
+ax.set_ylabel('${\\rm Re} h_{22}$')
+
+# %%
+slice_len_traj = 50
+orbit_len = len(sol)
+
+x_train,y_train,traj_indices = generate_slices(orbit_len, slice_len_traj=slice_len_traj)
+
+
+# %%
+batch_size=64
+num_epochs=30
+steps_per_epoch=int(len(x_train)/batch_size)
+
+indices=np.arange(x_train.shape[0])
+
+rng.shuffle(indices)
+
+custom_history = {}
+custom_history['loss'] = []
+custom_history['val_loss'] = []
+
+for epoch in range(num_epochs):
+
+    train_loss = 0.
+    val_loss = 0.
+
+    tepoch = tqdm(
+            range(steps_per_epoch),
+            desc=f"Epoch {epoch+1}/{num_epochs}"
+    )
+
+    for idx in tepoch:
+
+        batch_ids = rng.choice(indices, size=batch_size, replace=False)
+        batch = (
+            tf.gather(x_train, batch_ids), tf.gather(y_train, batch_ids)
+        )
+
+        slice_len = y_train.shape[1]
+
+        loss = model.train_step(batch, slice_len=slice_len)
+        train_loss += loss.numpy()
+        tepoch.set_postfix_str("batch={:d}, train loss={:.4f}".format(idx+1, train_loss/(idx+1)))
+
+    custom_history['loss'].append(train_loss/(idx+1))
+
+    rng.shuffle(indices)
+
+        
+    for step in range(int(steps_per_epoch/4)):
+
+        batch_ids = rng.choice(indices, size=batch_size, replace=False)
+        batch = (
+            tf.gather(x_train, batch_ids), tf.gather(y_train, batch_ids)
+        )
+
+        loss = model.test_step(batch, slice_len=slice_len)
+        val_loss += loss.numpy()
+
+    val_loss /= step + 1
+    print("val loss={:.4f}".format(val_loss))
+    custom_history['val_loss'].append(val_loss)
+
+    rng.shuffle(indices)
+
+# %%
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+start_id = np.argmin(traj_indices)
+x_start = x_train[start_id][tf.newaxis,...]
+
+predict_len_traj = 250
+print(predict_len_traj)
+
+################### plotting ###############
+
+ax.plot((times[1:-1]),true_wf, zorder=0)
+
+
+y_pred = model(x_start, num_steps=predict_len_traj)
+print(y_pred.shape)
+
+ax.scatter(times[:predict_len_traj][1:-1], y_pred[0], s=10, zorder=1)
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_xlabel('time')
+ax.set_ylabel('${\\rm Re} h_{22}$')
 
 # %% [markdown]
 # ### Unstable ODE integration?
