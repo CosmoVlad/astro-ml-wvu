@@ -359,4 +359,412 @@ ax.set_ylabel('$y$')
 
 fig.tight_layout()
 
+# %% [markdown]
+# ### Best practices
+
+# %% [markdown]
+# #### Splitting datasets
+#
+# Three subsets:
+# - training set: the NN is directly trained on this data;
+# - validation set: used to assess the NN's performance on the fly; not directly trained on, but the NN is tuned based on the validation set (possible "information leakage");
+# - test set: never seen by the NN and used for the final assessment.
+#
+# Typical fraction: 60% training + 20% validation + 20% test or similar percentages (e.g., 70+20+10).
+#
+# #### Validation splits
+#
+# - hold-out validation: partition into training, validation, and test sets;
+# - $K$-fold validation (for small datasets):
+#     - partition into $K$ subsets, 
+#     - use $(K-1)$ of them for training and 1 for validation,
+#     - repeat $K$ times,
+#     - take the average of the $K$ validation scores;
+# - iterative $K$-fold validation (for very small datasets):
+#     - use $K$-fold validation,
+#     - shuffle the entire dataset,
+#     - repeat some number of times,
+#     - take the final average.
+
+# %% [markdown]
+# #### Baseline model
+#
+# This is our intuition of how well we can do with a task at hand without any NN. For example, if in the classification example above, we just randomly guess a class, we will be right 50% of the time. Therefore, we want to build a NN with an accuracy higher than 50% at the very least.
+
+# %% [markdown]
+# *Example*. The same classification problem, but the dataset is imbalanced: there is 90% of one class and 10% of the other. Our baseline model is to always guess the first class which will make us right 90% of the time.
+
+# %%
+size1=900
+size2=100
+
+samples1 = rng.multivariate_normal(mean1, cov, size=size1)
+samples2 = rng.multivariate_normal(mean2, cov, size=size2)
+
+y1 = np.full(size1, True).astype('int')
+y2 = np.full(size2, False).astype('int')
+
+indices = np.arange(size1+size2)
+rng.shuffle(indices)
+
+X = np.concatenate((samples1, samples2), axis=0)[indices]
+Y = np.concatenate((y1,y2), axis=0)[indices]
+
+################### plotting ###########################3
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(5,5))
+
+ax.scatter(*X.T, c=Y)
+
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_aspect('equal')
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+# %%
+del model
+
+model = get_model(256,512,1024,2048,1024,512,256,128,64,32, last=1)
+
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.01),
+    loss=keras.losses.BinaryCrossentropy(from_logits=True),
+    metrics=["accuracy"]
+)
+
+history_imbalanced = model.fit(
+    X, Y, 
+    batch_size=128,
+    epochs=30,
+    validation_split=0.2
+)
+
+# %%
+val_acc = history_imbalanced.history['val_accuracy']
+train_acc = history_imbalanced.history['accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_ylim(0.8, 1.)
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
+
+################################################################
+
+zz = model.predict(np.array([xx.flatten(),yy.flatten()]).T).reshape(100,100)
+
+subset = rng.choice(indices, size=400, replace=False)
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(5,5))
+
+CS = ax.contour(xx, yy, zz, colors='black', levels=[0.], linestyles='dashed')
+
+ax.scatter(*X[subset].T, c=Y[subset])
+
+
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_aspect('equal')
+
+ax.set_xlim(-1,2)
+ax.set_ylim(-1,2)
+
+ax.set_xlabel('$x$')
+ax.set_ylabel('$y$')
+
+fig.tight_layout()
+
+# %% [markdown]
+# #### Getting started with a NN
+#
+# - make sure that the data is good enough;
+# - make the training loss go down (optimization); if it doesn't:
+#     - most likely, problem with the optimizer (learning rate, kind of the optimizer, etc.) 
+# - make the NN beat a baseline model (optimization); if it doesn't:
+#     - most likely, problems with the model's architecture (e.g., using Dense layers instead of Conv layers for image classification) 
+# - make the NN overfit (figure out the generalization boundary);
+#     - combat overfitting: use more data, a less complex NN, regularization 
+# - tune (achieve both optimization and generalization).
+
+# %% [markdown]
+# #### Example: MNIST classification with a complex NN and a subset of the data
+#
+# ##### Overfitting
+
+# %%
+(x_train, y_train), _ = mnist.load_data()
+
+x_train = x_train.reshape(-1, 28*28)
+x_train = x_train.astype("float32") / 255
+
+del model
+
+model = get_model(128,256,128,64,32)
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"]
+)
+
+
+history_over = model.fit(
+    x_train[:1000], y_train[:1000], 
+    batch_size=128,
+    epochs=20,
+    validation_split=0.2
+)
+
+################### plotting ########################
+
+val_acc = history_over.history['val_accuracy']
+train_acc = history_over.history['accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_ylim(0.7, 1.)
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
+
+# %% [markdown]
+# ##### More data
+
+# %%
+(x_train, y_train), _ = mnist.load_data()
+
+x_train = x_train.reshape(-1, 28*28)
+x_train = x_train.astype("float32") / 255
+
+del model
+
+model = get_model(128,256,128,64,32)
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"]
+)
+
+
+history_over = model.fit(
+    x_train, y_train, 
+    batch_size=128,
+    epochs=20,
+    validation_split=0.2
+)
+
+################### plotting ########################
+
+val_acc = history_over.history['val_accuracy']
+train_acc = history_over.history['accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_ylim(0.7, 1.)
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
+
+# %% [markdown]
+# ##### Less complex model
+
+# %%
+(x_train, y_train), _ = mnist.load_data()
+
+x_train = x_train.reshape(-1, 28*28)
+x_train = x_train.astype("float32") / 255
+
+del model
+
+model = get_model(8,16,32,16,8)
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"]
+)
+
+
+history_over = model.fit(
+    x_train, y_train, 
+    batch_size=128,
+    epochs=20,
+    validation_split=0.2
+)
+
+################### plotting ########################
+
+val_acc = history_over.history['val_accuracy']
+train_acc = history_over.history['accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_ylim(0.7, 1.)
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
+
+# %% [markdown]
+# ##### Regularization: $L_2$ and $L_1$
+
+# %%
+(x_train, y_train), _ = mnist.load_data()
+
+x_train = x_train.reshape(-1, 28*28)
+x_train = x_train.astype("float32") / 255
+
+del model
+
+model = keras.Sequential()
+
+for num_units in [128,256,128,64,32]:
+    model.add(Dense(num_units, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)))
+
+model.add(Dense(10))
+
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"]
+)
+
+
+history_over = model.fit(
+    x_train, y_train, 
+    batch_size=128,
+    epochs=20,
+    validation_split=0.2
+)
+
+################### plotting ########################
+
+val_acc = history_over.history['val_accuracy']
+train_acc = history_over.history['accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_ylim(0.7, 1.)
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
+
+# %% [markdown]
+# ##### Regularization: Dropout
+
+# %%
+(x_train, y_train), _ = mnist.load_data()
+
+x_train = x_train.reshape(-1, 28*28)
+x_train = x_train.astype("float32") / 255
+
+del model
+
+model = keras.Sequential()
+
+for num_units in [128,256,128,64,32]:
+    model.add(Dense(num_units, activation='relu'))
+    model.add(keras.layers.Dropout(0.3))
+
+model.add(Dense(10))
+
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=["accuracy"]
+)
+
+
+history_over = model.fit(
+    x_train, y_train, 
+    batch_size=128,
+    epochs=20,
+    validation_split=0.2
+)
+
+################### plotting ########################
+
+val_acc = history_over.history['val_accuracy']
+train_acc = history_over.history['accuracy']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+ax.set_ylim(0.7, 1.)
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
+
 # %%
