@@ -55,6 +55,8 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 #fig.tight_layout()
 
 # %% [markdown]
+# ### Chapter 5
+#
 # In this chapter, F. Chollet focuses on the following concepts:
 # - the manifold hypothesis which serves as an intuitive justification of why neural networks are able to generalize after training;
 # - trade-off between optimization to the training data and generalization to new (test) data;
