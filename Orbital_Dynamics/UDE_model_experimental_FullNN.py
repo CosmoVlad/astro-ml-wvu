@@ -141,21 +141,6 @@ fig.savefig('test.pdf')
 # denotes averaging over the time interval.
 
 # %%
-import scipy.integrate as integrate
-
-def GR_time_scales(p,e):
-    #chidot = ((p - 2 - 2*e*np.cos(chi))*((1 + e*np.cos(chi))**2)*np.sqrt(p - 6 - 2*e*np.cos(chi))/(p**2 * np.sqrt((p - 2)**2 - 4*e**2)))
-    T_radial = integrate.quad(lambda chi: 1/((p - 2 - 2*e*np.cos(chi))*((1 + e*np.cos(chi))**2)*np.sqrt(p - 6 - 2*e*np.cos(chi))/(p**2 * np.sqrt((p - 2)**2 - 4*e**2))) , 0 , 2*np.pi)
-    return T_radial
-
-ps = np.linspace(50,100,3)
-es = np.linspace(0.,0.99,5)
-for p in ps:
-    for e in es:
-        T_rad = GR_time_scales(p,e)
-        a = p/(1 - e**2)
-        T_kep = 2*np.pi*a**(3/2)
-        print(T_rad[0]/T_kep)
 
 # %%
 
@@ -208,8 +193,8 @@ class Fblock(keras.layers.Layer):
         if self.units_list[-1] == 2:
             # x has shape (batch_size,2), need to give it (batch_size,4) with zeros
             phidot , chidot = tf.unstack(x, axis=-1)
-            xzero = tf.zeros_like(phidot)
-            x = tf.stack([phidot , chidot , xzero , xzero],axis=-1)
+            xzero = tf.zeros(shape=phidot.shape)
+            x = tf.transpose(tf.convert_to_tensor([phidot , chidot , xzero , xzero]))
         return x
         
 
@@ -502,15 +487,12 @@ class GR():
             y (tf.Tensor): Input batch of primitive variables.
 
         Returns:
-            tf.Tensor: Output batch of GR right hand sides
+            tf.Tensor: Output batch of Newtonian right hand sides
         """
         phi,chi,p,e = tf.unstack(y, axis=-1)
-        tmp0 = -4*((e)*(e)) + ((p - 2)*(p - 2))
-        tmp1 = e*tf.math.cos(chi)
-        tmp2 = -p + 2*tmp1
-        tmp3 = ((tmp1 + 1)*(tmp1 + 1))*(-tmp2 - 2)
-        phi_dot = tf.math.pow(p, -1.5)*tmp3/tf.math.sqrt(tmp0)
-        chi_dot = tmp3*tf.math.sqrt((-tmp2 - 6)/tmp0)/((p)*(p))
+        phi_dot = (1 + e*tf.math.cos(chi))**2 / p**1.5 * (p - 2 - 2*e*tf.math.cos(chi)) / tf.math.sqrt((p-2)**2 - 4*e**2)
+        chi_dot = (1 + e*tf.math.cos(chi))**2 / p**2 * (p - 2 - 2*e*tf.math.cos(chi)) *\
+                    tf.math.sqrt( (p - 6 - 2*e*tf.math.cos(chi)) / ((p-2)**2 - 4*e**2))
         p_dot = tf.zeros(shape=p.shape,dtype=p.dtype)
         e_dot = tf.zeros(shape=e.shape,dtype=e.dtype)
         return tf.transpose(tf.convert_to_tensor([phi_dot,chi_dot,p_dot,e_dot]))
@@ -576,7 +558,7 @@ class GR():
 
 test_GR_infrastructure = True
 if test_GR_infrastructure:
-    batch_size = 100
+    batch_size = 1000
     model_sample = np.linspace(0.,1.,batch_size)
     phi0 = 2*np.pi*model_sample
     np.random.shuffle(phi0)
@@ -586,18 +568,13 @@ if test_GR_infrastructure:
     np.random.shuffle(p0)
     e0 = 0.5*model_sample
     np.random.shuffle(e0)
-    #e0 = 0.5
-    #p0 = 100
     q = 0.01
     tinit = 0.
-    #select tfin so that at least 10 orbits is sampled in each case
+    #select tfin so that at least 1 orbit is sampled in each case
     a = p0 / (1 - e0**2)
     Tkep = 2 * np.pi * np.sqrt(a**3)
-    tfin = 10*Tkep.max()
-    #select len_sol so that at least 1 orbit is sampled over 100 points
-    #smallest_orbit_length = Tkep.min()
-    #dt_est = int(smallest_orbit_length/102.)
-    len_sol = 1002
+    tfin = Tkep.max()
+    len_sol = 102
     times = np.linspace(tinit, tfin, len_sol)
     dt = times[1] - times[0]
     y0 = np.c_[phi0,chi0,p0,e0]
@@ -609,14 +586,10 @@ if test_GR_infrastructure:
     )
     GR_waveform = model_GR(input_tensor)
     sol = model_GR.sol
-    chisols = sol[:,:,0]
     fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
     true_wf = GR_waveform[0]
     ax.plot((times[1:-1]),true_wf)
     ax.scatter((times[1:-1])[::1],true_wf[::1], s=10, color='black')
-    #for i in range(batch_size):
-    #    ax.plot(times,(chisols[:,i] - chisols[0,i])/2/np.pi)
-    #ax.axhline(1)
     ax.grid(True,linestyle=':',linewidth='1.')
     ax.xaxis.set_ticks_position('both')
     ax.yaxis.set_ticks_position('both')
@@ -629,23 +602,25 @@ if test_GR_infrastructure:
 # %%
 single_traj_training = False
 if single_traj_training:
+    rng = np.random.default_rng()
     gr_dynamics = sol[:,0]
     gr_waveforms = GR_waveform[0]
     gr_mean = tf.math.reduce_mean(gr_waveforms)
     gr_stdev = tf.math.reduce_std(gr_waveforms)
     gr_waveforms_norm = (gr_waveforms - gr_mean)/gr_stdev
     orbit_len = len(gr_dynamics)
-    slice_len = max(2,orbit_len//100) #1% of orbit length
-    train_size = 100*slice_len #100% of orbit length
-    indices = [i*slice_len for i in range(train_size)]
+    slice_len = min(10,orbit_len//5) #20% of orbit length
+    train_size = 100
+    indices = rng.integers(low=0, high=orbit_len-slice_len, size=train_size)
     x_train = tf.gather(gr_dynamics, indices)
     y_train = tf.stack([gr_waveforms_norm[i:i+slice_len-2] for i in indices])
-    print(x_train.shape)
-    print(y_train.shape)
+    print(x_train.shape,y_train.shape)
     fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+    
     ax.plot((times[1:-1]),gr_waveforms_norm)
     for h_slice,i in zip(y_train,indices):
-        ax.scatter((times[i+1:i+slice_len-2+1]),h_slice, s=10,)
+        ax.scatter((times[i:i+slice_len-2]),h_slice, s=10,)
+    
     ax.grid(True,linestyle=':',linewidth='1.')
     ax.xaxis.set_ticks_position('both')
     ax.yaxis.set_ticks_position('both')
@@ -655,31 +630,49 @@ if single_traj_training:
     ax.set_ylabel('$y$')
 
 else:
-    # Smart slicing: 10 orbit lengths per slice.
-    rng = np.random.default_rng()
+    # commenting out slicing rn
     orbit_len = len(sol)
-    train_size = batch_size
+    slice_len = (orbit_len//10) #~10% of orbit length
+    num_cases = 10
+    train_size = batch_size*num_cases
+    rng = np.random.default_rng()
     gr_mean = tf.math.reduce_mean(GR_waveform)
     gr_stdev = tf.math.reduce_std(GR_waveform)
     gr_waveforms_norm = (GR_waveform - gr_mean)/gr_stdev
-    x_train = sol[0]
-    print(f"shape of sol: {sol.shape}")
-    x_train = tf.convert_to_tensor(x_train)
-    y_train = tf.convert_to_tensor(gr_waveforms_norm)
     print(f"shape of gr_waveforms_norm: {gr_waveforms_norm.shape}")
+    x_train = []
+    y_train_noflat = []
+    indices = []
+    for i in range(batch_size):
+        indices_for_this_batch = []
+        y_train_for_this_batch = []
+        for j in range(num_cases):
+            idx = rng.integers(low=0, high=orbit_len-slice_len)
+            x_train.append(sol[idx,i])
+            y_train_for_this_batch.append(gr_waveforms_norm[i,idx:idx+slice_len-2])
+            indices_for_this_batch.append(idx)
+        indices.append(indices_for_this_batch)
+        y_train_noflat.append(y_train_for_this_batch)
+    x_train = tf.convert_to_tensor(x_train)
+    y_train_noflat = tf.convert_to_tensor(y_train_noflat)
+    y_train = tf.reshape(y_train_noflat,(train_size,slice_len-2))
+    indices = np.array(indices,dtype=int)
     print(f"shape of x_train: {x_train.shape} , expected: ({train_size},4)")
-    print(f"shape of y_train: {y_train.shape} , expected: ({train_size},{orbit_len - 2})")
+    print(f"shape of y_train: {y_train.shape} , expected: ({train_size},{slice_len - 2})")
     fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
     i_plot = rng.integers(low=0,high=batch_size)
     ax.plot((times[1:-1]),gr_waveforms_norm[i_plot])
-    ax.scatter(times[1:-1],y_train[i_plot], s=10,)
+    for i in range(len(indices[i_plot])):
+        h_slice = y_train_noflat[i_plot,i]
+        idx = indices[i_plot,i]
+        ax.scatter(times[idx+1:idx+slice_len-2+1],h_slice, s=10,)
     ax.grid(True,linestyle=':',linewidth='1.')
     ax.xaxis.set_ticks_position('both')
     ax.yaxis.set_ticks_position('both')
     ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
     
-    ax.set_xlabel('$t$')
-    ax.set_ylabel('$\mathfrak{Re}(h)$')
+    ax.set_xlabel('$x$')
+    ax.set_ylabel('$y$')
 
 
 # %%
@@ -688,12 +681,14 @@ q = 0.01
 partial_units_list = [12,25]
 gr_mean = tf.cast(gr_mean,dtype=tf.float32)
 gr_stdev = tf.cast(gr_stdev,dtype=tf.float32)
-model = UDE(partial_units_list,model_GR.num_step,model_GR.timestep,q,gr_mean,gr_stdev)
+model = UDE(partial_units_list,slice_len,model_GR.timestep,q,gr_mean,gr_stdev)
 y_pred = model(x_train)
-i_plot = rng.integers(low=0,high=batch_size)
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 ax.plot((times[1:-1]),gr_waveforms_norm[i_plot])
-ax.scatter(times[1:-1],y_pred[i_plot], s=10,)
+for i in range(len(indices[i_plot])):
+    h_slice = y_pred[i_plot*num_cases + i]
+    idx = indices[i_plot,i]
+    ax.scatter(times[idx+1:idx+slice_len-2+1],h_slice, s=10,)
 ax.grid(True,linestyle=':',linewidth='1.')
 ax.xaxis.set_ticks_position('both')
 ax.yaxis.set_ticks_position('both')
@@ -704,6 +699,8 @@ ax.set_ylabel('$y$')
 
 
 # %%
+model.change_num_step(slice_len)
+
 model.compile(
     optimizer=keras.optimizers.Adam(learning_rate=1e-5,clipnorm=.01),
     loss=keras.losses.MeanSquaredError(),
@@ -794,62 +791,5 @@ tf.linalg.eigvals(init_jac)
 timestep
 
 # %%
-
-# %%
-import numpy as np
-from scipy.integrate import solve_ivp
-
-class ODEIntegrator:
-    def __init__(self, t_span, dt, initial_conditions):
-        self.t_span = t_span
-        self.dt = dt
-        self.initial_conditions = np.asarray(initial_conditions)
-        self.num_conditions = self.initial_conditions.shape[0]
-
-    def rhs(self, t, y, params):
-        raise NotImplementedError("Subclasses must implement the rhs function.")
-
-    def integrate_batch(self):
-        t_eval = np.arange(self.t_span[0], self.t_span[1] + self.dt, self.dt)
-        results = []
-
-        def vectorized_rhs(t, Y):
-            Y_reshaped = Y.reshape(self.num_conditions, -1)
-            dydt = np.array([self.rhs(t, y) for y in Y_reshaped])
-            return dydt.flatten()
-
-        Y0 = self.initial_conditions.flatten()
-        sol = solve_ivp(vectorized_rhs, self.t_span, Y0, t_eval=t_eval, method='RK45')
-
-        return sol.t, sol.y.reshape(self.num_conditions, -1, len(sol.t))
-
-# Example subclass with a simple harmonic oscillator (x'' = -x)
-class HarmonicOscillator(ODEIntegrator):
-    def rhs(self, t, y):
-        x, v = y[0], y[1]
-        dxdt = v
-        dvdt = -x
-        return np.array([dxdt, dvdt])
-
-class GR(ODEIntegrator):
-    def rhs(self, t, y, params):
-        phi , chi, p , e = y[0], y[1]
-        dxdt = v
-        dvdt = -x
-        return np.array([dxdt, dvdt])
-
-
-# Parameters
-t_span = (0, 10)
-dt = 0.1
-initial_conditions = [[1.0, 0.0], [0.5, 0.5], [2.0, -1.0]]
-
-# Run integration
-oscillator = HarmonicOscillator(t_span, dt, initial_conditions)
-time, solutions = oscillator.integrate_batch()
-
-print("Time shape:", time.shape)
-print("Solution shape (batch, vars, time):", solutions.shape)
-
 
 # %%
