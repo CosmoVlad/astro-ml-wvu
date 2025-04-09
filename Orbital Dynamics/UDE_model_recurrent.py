@@ -293,48 +293,55 @@ ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 ax.set_xlabel('time')
 ax.set_ylabel('${\\rm Re\,}h_{22}$')
 
-# %% [markdown]
-#
-# $$
-# \
-# $$
 
 # %%
-units=10
+class WaveformGRU(keras.Model):
+    def __init__(self, units, num_steps, **kwargs):
+        super(WaveformGRU, self).__init__(**kwargs)
+        self.units = units
+        self.num_steps = num_steps
+        self._dtype = kwargs.get('dtype', tf.float32)
+        
+        self.gru_cell = layers.GRUCell(units, dtype=self._dtype)
+        self.wf_dense = layers.Dense(1, dtype=self._dtype)
+
+    def build(self, input_dim):
+        super(WaveformGRU, self).build(input_dim)
+        self.traj_dense = layers.Dense(input_dim[-1], dtype=self._dtype)
+
+    def call(self, input_tensor, training=False):
+        
+        y_output = []
+        batch_size = tf.shape(input_tensor)[0]
+        state = tf.zeros(
+            shape=(batch_size, self.units)
+        )
+        
+        output, state = self.gru_cell(input_tensor, state)
+        waveform_output = self.wf_dense(output)
+        output = self.traj_dense(output)
+        y_output = [waveform_output]
+        
+        for i in range(self.num_steps-1):
+            output, state = self.gru_cell(output, state)
+            waveform_output = self.wf_dense(output)
+            output = self.traj_dense(output)
+            y_output.append(waveform_output)
+        
+        y_output = tf.stack(y_output, axis=1)  # Shape: (batch_size, num_steps, 1)
+        return tf.squeeze(y_output, axis=-1)  # Shape: (batch_size, num_steps)
+
+units=128
 batch_size=32
 
 x_batch = x_train[:batch_size]
 y_batch = y_train[:batch_size] # (batch, slice_len)
 _,num_steps = y_batch.shape
 
-test_cell = layers.GRUCell(units)
-orbit_layer = layers.Dense(4)
-waveform_layer = layers.Dense(1)
+model = WaveformGRU(units, num_steps)
 
-y_output = []
-state = tf.zeros(
-    shape=(batch_size, units)
-)
-
-output, state = test_cell(x_batch, state)
-orbit_output = orbit_layer(output)
-waveform_output = waveform_layer(output)
-output = orbit_output
-y_output = [waveform_output]
-
-for i in range(num_steps-1):
-    output, state = test_cell(output, state)  # x_batch.shape = (batch, features)
-    orbit_output = orbit_layer(output)
-    waveform_output = waveform_layer(output)
-    y_output.append(waveform_output)
-    output = orbit_output
-
-# y_output.shape = (num_steps, batch, 1)  -> (batch, num_steps, 1)
-
-y_output = tf.transpose(y_output, perm=[1,0,2])
-y_output = tf.squeeze(y_output)
-
-y_output.shape, y_batch.shape
+y_output = model(x_batch)
+y_output.shape
 
 # %%
 # timestep = times[1] - times[0]
@@ -345,15 +352,35 @@ y_output.shape, y_batch.shape
 # model = UDE(partial_units_list, slice_len, timestep, q, mean, std)
 
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.),
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
     loss=keras.losses.MeanSquaredError(),
 )
 
-# # training
-# history = model.fit(
-#     x_train, y_train, 
-#     batch_size=128, epochs=200, validation_split=0.2, verbose=1,
-# )
+# training
+history = model.fit(
+    x_train, y_train, 
+    batch_size=128, epochs=200, validation_split=0.2, verbose=1,
+)
+
+# %%
+val_acc = history.history['val_loss']
+train_acc = history.history['loss']
+
+fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+
+ax.semilogy(1 + np.arange(len(val_acc)), train_acc, label='training')
+ax.semilogy(1 + np.arange(len(val_acc)), val_acc, label='validation')
+
+ax.legend()
+
+ax.grid(True,linestyle=':',linewidth='1.')
+ax.xaxis.set_ticks_position('both')
+ax.yaxis.set_ticks_position('both')
+ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+
+
+ax.set_xlabel('epoch')
+ax.set_ylabel('accuracy')
 
 # %%
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
@@ -362,11 +389,12 @@ fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
 
 ax.plot((times[1:-1]),true_wf, zorder=0)
 
-predict_len_traj = slice_len_traj + 5
 
-y_pred = model(x_train[10:20], num_steps=predict_len_traj)
+y_pred = model(x_train[10:12])
 
-for h_slice,i in zip(y_pred, traj_indices[10:20]):
+predict_len_traj = slice_len_traj
+
+for h_slice,i in zip(y_pred, traj_indices[10:12]):
     ax.scatter(times[1:-1][i:i+predict_len_traj-2], h_slice, s=10, zorder=1)
 
 ax.grid(True,linestyle=':',linewidth='1.')
@@ -376,6 +404,9 @@ ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
 
 ax.set_xlabel('time')
 ax.set_ylabel('${\\rm Re} h_{22}$')
+
+# %%
+y_pred.shape, slice_len_traj
 
 # %%
 fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
