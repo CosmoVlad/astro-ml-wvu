@@ -55,71 +55,6 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 #fig.savefig('test.pdf')
 
 # %% [markdown]
-# #### Datasets
-#
-# Although it is possible to use `tensorflow` to load the MNIST datasets, let us first just download it from the source. The original MNIST website throws an access denied error. We will use a [GitHub repo](https://github.com/lorenmh/mnist_handwritten_json) instead to download a training set `mnist_handwritten_train.json` and a test set `mnist_handwritten_test.json`.
-
-# %%
-import json
-
-with open('../Session 3/data/mnist_handwritten_train.json', 'r') as file:
-    training_json = json.load(file)
-
-with open('../Session 3/data/mnist_handwritten_test.json', 'r') as file:
-    testing_json = json.load(file)
-
-# %%
-# arr = np.array(training_json[0]['image'])
-# print(training_json[0]['label'])
-
-# plt.imshow(arr.reshape(28,28))
-
-rng = np.random.default_rng()
-
-train_len = len(training_json)
-
-images = []
-labels = []
-for i in range(25):
-    index = rng.integers(train_len-1)
-    images.append(np.array(training_json[index]['image']).reshape(28,28))
-    labels.append(training_json[index]['label'])
-
-
-fig,axes = plt.subplots(ncols=5, nrows=5, figsize=(10,10))
-
-
-for image,label,ax in zip(images,labels,axes.flatten()):
-
-    ax.imshow(image)
-    ax.annotate(label, xy=(0.8,0.8), xycoords='axes fraction', color='white')
-    ax.set_axis_off()
-    #ax.title.set_text(label)
-
-
-# %%
-x_train = []
-y_train = []
-x_test = []
-y_test = []
-
-for data in training_json:
-    x_train.append(data['image'])
-    y_train.append(data['label'])
-
-for data in testing_json:
-    x_test.append(data['image'])
-    y_test.append(data['label'])
-
-x_train = np.array(x_train) / 255.
-y_train = np.array(y_train)
-x_test = np.array(x_test) / 255.
-y_test = np.array(y_test)
-
-# %%
-x_train.shape, x_test.shape, y_train.shape, y_test.shape
-
-# %% [markdown]
 # #### Fully connected NN with dropout layers
 
 # %%
@@ -127,11 +62,20 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
+from tensorflow.keras.datasets import mnist
+
 from keras.losses import CategoricalCrossentropy, SparseCategoricalCrossentropy
 from keras.optimizers import Adam
-# digit 5
-#[0,0,0,0,1,0,0,0,0,0]
-#[0.1,0.1,0.01,0.01,0.7,,,,,]
+
+# --- 1. Load and Preprocess MNIST Data ---
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+
+# Normalize pixel values to [0, 1] and add channel dimension
+x_train = x_train.astype("float32") / 255.0
+x_train = x_train[..., tf.newaxis] # Shape: (60000, 28, 28, 1)
+
+x_test = x_test.astype("float32") / 255.0
+x_test = x_test[..., tf.newaxis] # Shape: (10000, 28, 28, 1)
 
 # %% [markdown]
 # A `Dropout(fraction)` layer breaks a fraction `fraction` of connections between two adjacent layers. The intuition is to prevent units in the two layers from "conspiring" to overfit the training data.

@@ -98,6 +98,7 @@ class Denoise(Model):
       layers.Conv2DTranspose(16, kernel_size=3, strides=2, activation='relu', padding='same'),
       layers.Conv2D(1, kernel_size=(3, 3), activation='sigmoid', padding='same')])
 
+    
   def call(self, x):
     encoded = self.encoder(x)
     decoded = self.decoder(encoded)
@@ -245,47 +246,118 @@ plt.tight_layout(rect=[0, 0, 1, 0.95])
 plt.show()
 
 # %%
+rng = np.random.default_rng(seed=13)
 
+index = rng.choice(np.arange(len(x_test)))
 
-model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001),
-    loss=keras.losses.MeanSquaredError(),
+image = x_test[index]
+rec_image = reconstructed_x_test[index]
+
+fig,axes = plt.subplots(ncols=2, nrows=1, figsize=(6,4))
+
+axes[0].imshow(image)
+axes[1].imshow(rec_image)
+
+for ax in axes:
+    ax.axis('off')
+
+fig.tight_layout()
+fig.savefig('mnist_auto.png')
+
+# %%
+index_anom = rng.choice(np.arange(len(plot_indices)))
+
+image = x_test[index_anom]
+rec_image = reconstructed_x_test[index_anom]
+
+fig,axes = plt.subplots(ncols=2, nrows=1, figsize=(6,4))
+
+axes[0].imshow(image)
+axes[1].imshow(rec_image)
+
+for ax in axes:
+    ax.axis('off')
+
+fig.tight_layout()
+fig.savefig('mnist_auto_anom.png')
+
+# %%
+from tensorflow.keras.utils import plot_model
+
+plot_model(
+    autoencoder.encoder, to_file='./model_plot.png', 
+    show_shapes=True, show_layer_names=True, show_dtype=False, 
+    rankdir='TB'
 )
 
-history = model.fit(
-    x_train, x_train, 
-    batch_size=128,
-    epochs=4,
-    validation_split=0.2
-)
-
 # %%
-val_acc = history.history['val_loss']
-train_acc = history.history['loss']
+import numpy as np
+import matplotlib.pyplot as plt
 
-fig,ax = plt.subplots(ncols=1, nrows=1, figsize=(6,4))
+# 1. Define the range for u and v
+u_min, u_max = -2.5, 2.5 # Adjusted range to better see the cubic features
+v_min, v_max = -2.5, 2.5
+num_points = 200  # Increased points for smoother contours
 
-ax.plot(1 + np.arange(len(val_acc)), train_acc, label='training')
-ax.plot(1 + np.arange(len(val_acc)), val_acc, label='validation')
+u_vals = np.linspace(u_min, u_max, num_points)
+v_vals = np.linspace(v_min, v_max, num_points)
 
-ax.legend()
+# 2. Create a 2D grid (meshgrid) of u and v values
+U, V = np.meshgrid(u_vals, v_vals)
 
-ax.grid(True,linestyle=':',linewidth='1.')
-ax.xaxis.set_ticks_position('both')
-ax.yaxis.set_ticks_position('both')
-ax.tick_params('both',length=3,width=0.5,which='both',direction = 'in',pad=10)
+# 3. Calculate Re(x^3) and Im(x^3)
+Re_X_cubed = U**3 - 3*U*(V**2)
+Im_X_cubed = 3*(U**2)*V - V**3
+
+# 4. Plot the contours
+plt.figure(figsize=(9, 7)) # Adjusted figure size
+
+# Determine suitable contour levels.
+# For cubic functions, values can grow quickly.
+# Let's try some levels around zero and some larger ones.
+# You might need to adjust these based on the u,v range.
+levels_re = np.array([-8, -4, -2, -1, -0.5, 0, 0.5, 1, 2, 4, 8])
+levels_im = np.array([-8, -4, -2, -1, -0.5, 0, 0.5, 1, 2, 4, 8])
+# Alternatively, you can let matplotlib choose, or use np.linspace for evenly spaced levels
+# levels_re = plt.MaxNLocator(nbins=15).tick_values(Re_X_cubed.min(), Re_X_cubed.max())
+# levels_im = plt.MaxNLocator(nbins=15).tick_values(Im_X_cubed.min(), Im_X_cubed.max())
 
 
-ax.set_xlabel('epoch')
-ax.set_ylabel('accuracy')
+# Plot contours of constant Re(x^3)
+cs_re = plt.contour(U, V, Re_X_cubed, levels=levels_re, colors='blue', linestyles='solid', linewidths=1.5)
+plt.clabel(cs_re, inline=True, fontsize=9, fmt='%1.1f') # Add labels to contours
 
-# %%
-x_predict = model.predict(x_train[:2048])
+# Plot contours of constant Im(x^3)
+cs_im = plt.contour(U, V, Im_X_cubed, levels=levels_im, colors='red', linestyles='dashed', linewidths=1.5)
+plt.clabel(cs_im, inline=True, fontsize=9, fmt='%1.1f') # Add labels to contours
 
-# %%
-errs = tf.math.reduce_mean((x_predict-x_train[:2048])**2, axis=(1,2,3)).numpy()
+# 5. Add labels and title
+plt.xlabel('u (Real part of x)')
+plt.ylabel('v (Imaginary part of x)')
+plt.title('Contours of Re(x³) and Im(x³) in the u,v plane (x = u + iv)')
 
-# %%
-x_anom = x_train[:2048]
+# Add x and y axes for reference
+plt.axhline(0, color='black', lw=0.7)
+plt.axvline(0, color='black', lw=0.7)
+
+# Set aspect ratio to be equal
+plt.gca().set_aspect('equal', adjustable='box')
+plt.grid(True, linestyle=':', alpha=0.6)
+
+# Create a custom legend
+from matplotlib.lines import Line2D
+legend_elements = [Line2D([0], [0], color='blue', lw=1.5, linestyle='solid', label='Re(x³) = constant'),
+                   Line2D([0], [0], color='red', lw=1.5, linestyle='dashed', label='Im(x³) = constant')]
+plt.legend(handles=legend_elements, loc='upper right')
+
+plt.show()
+
+# %% [markdown]
+# $$
+# \int\limits_0^1{\rm d}x\,e^{i\lambda x^3}
+# $$
+# $$
+# x = u+iv\,, \qquad \Re x^3 = {\rm const}\,, \quad \Im x^3 = {\rm const}\,. 
+# $$
 
 # %%
